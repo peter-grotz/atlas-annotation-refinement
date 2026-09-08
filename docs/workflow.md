@@ -50,6 +50,7 @@ most informative.
 | over-coverage; excess bounded by higher- and lower-intensity neighbours | band threshold |
 | under-coverage; structure interior separable but partly below a single threshold | hysteresis |
 | over-coverage; excess a shell of roughly constant thickness with no intensity separation | morphological |
+| right volume, both error populations large (`displacement`) | registration-limited; the label needs moving, not resizing |
 | disagreement with no intensity separation at either boundary | registration-limited; correction cannot help |
 
 The last row is the case to detect early. Where a boundary borders material of

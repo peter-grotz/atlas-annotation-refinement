@@ -67,10 +67,15 @@ class ErrorSignature:
     #: Fraction of excess voxels belonging to its largest connected component.
     excess_largest_component: float
 
-    #: Highest recall attainable by removing voxels only. Missed voxels lie
-    #: outside the propagated label and cannot be recovered by subtraction.
-    recall_ceiling: float
+    #: Highest recall a purely SUBTRACTIVE correction could reach. Missed voxels
+    #: lie outside the propagated label, so no rule that only removes material
+    #: can recover them. It bounds thresholding and erosion; it says nothing
+    #: about corrections that move or grow the label, and is not a bound on the
+    #: task.
+    subtractive_recall_ceiling: float
 
+    #: Which correction direction the disagreement calls for. See
+    #: :func:`classify_error`.
     dominant_error: str
 
     def to_dict(self) -> dict:
@@ -85,8 +90,41 @@ class ErrorSignature:
             f"{self.excess_largest_component:.1%} in one component\n"
             f"matched at {self.matched.median_over_background:.2f}x background, "
             f"intensity separation {self.intensity_separation:.2f}\n"
-            f"recall ceiling {self.recall_ceiling:.4f}"
+            f"subtractive recall ceiling {self.subtractive_recall_ceiling:.4f}"
         )
+
+
+#: Volume ratios within this band of 1.0 are treated as neither over- nor
+#: under-covering; the label holds about the right amount of material.
+_VOLUME_DEADBAND = 0.10
+
+#: Error populations above this fraction of the reference are substantial enough
+#: that a label with the right volume is displaced rather than well placed.
+_DISPLACEMENT_ERROR_FRACTION = 0.15
+
+
+def classify_error(volume_ratio: float, excess: int, missed: int, reference: int) -> str:
+    """Name the correction direction the disagreement calls for.
+
+    Comparing raw voxel counts is not enough. A label holding almost exactly the
+    right amount of material can still disagree with the reference over most of
+    its extent, and the sign of a 0.2% count difference is then arbitrary. Such a
+    label is displaced, and neither adding nor removing material will fix it: the
+    correction has to move it.
+
+    Returns one of ``over-coverage``, ``under-coverage``, ``displacement``, or
+    ``close-agreement``.
+    """
+    if reference <= 0:
+        return "undefined"
+    balanced = abs(volume_ratio - 1.0) <= _VOLUME_DEADBAND
+    substantial = (
+        excess / reference >= _DISPLACEMENT_ERROR_FRACTION
+        and missed / reference >= _DISPLACEMENT_ERROR_FRACTION
+    )
+    if balanced:
+        return "displacement" if substantial else "close-agreement"
+    return "over-coverage" if volume_ratio > 1.0 else "under-coverage"
 
 
 def characterize(image: Volume, label: Volume, reference: Volume) -> ErrorSignature:
@@ -145,21 +183,35 @@ def characterize(image: Volume, label: Volume, reference: Volume) -> ErrorSignat
         excess_median_depth=round(median_depth, 3),
         excess_surface_fraction=round(surface_fraction, 4),
         excess_largest_component=round(largest, 4),
-        recall_ceiling=round(recall, 6),
-        dominant_error="over-coverage" if n_pred > n_true else "under-coverage",
+        subtractive_recall_ceiling=round(recall, 6),
+        dominant_error=classify_error(
+            n_pred / n_true if n_true else float("nan"),
+            int(excess.sum()),
+            int(missed.sum()),
+            n_true,
+        ),
     )
 
 
 def _distribution_separation(a: IntensityBand, b: IntensityBand) -> float:
-    """Gap between two interquantile ranges relative to their combined spread.
+    """How cleanly two intensity populations separate, on a bounded scale.
 
-    Returns a positive value when the ranges are disjoint and a negative value
-    when they overlap, scaled so magnitudes are comparable across volumes.
+    The signed gap between the near edges of the two interquantile ranges,
+    normalised by that gap plus their combined spread. The result lies in
+    (-1, 1): approaching +1 when the ranges are disjoint and the populations can
+    be told apart by intensity alone, and approaching -1 when they overlap so
+    heavily that no threshold can separate them.
+
+    Normalising by spread alone is undefined for a uniform population and
+    unbounded for a nearly uniform one, which is the common case in synthetic
+    data and in regions of saturated signal. Including the gap in the
+    denominator keeps the measure finite and comparable across volumes.
     """
     if a.count == 0 or b.count == 0:
         return float("nan")
-    spread = (a.p90 - a.p10) + (b.p90 - b.p10)
-    if spread <= 0:
-        return float("nan")
+    spread = max((a.p90 - a.p10), 0.0) + max((b.p90 - b.p10), 0.0)
     gap = a.p10 - b.p90 if a.median > b.median else b.p10 - a.p90
-    return float(gap / spread)
+    scale = spread + abs(gap)
+    if scale <= 0:
+        return 0.0  # identical degenerate distributions: no separation either way
+    return float(gap / scale)

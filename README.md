@@ -156,9 +156,15 @@ reports:
   displaced region;
 - the connected-component decomposition of the excess, distinguishing one
   coherent region from scattered disagreement;
-- the recall ceiling — the highest recall any subtractive correction can reach,
-  since missed voxels lie outside the propagated label and cannot be recovered
-  by removing material.
+- the subtractive recall ceiling — the highest recall a correction that only
+  removes material can reach, since missed voxels lie outside the propagated
+  label. It bounds thresholding and erosion, and says nothing about corrections
+  that move or grow the label;
+- a classification of the disagreement as over-coverage, under-coverage,
+  displacement, or close agreement. Comparing voxel counts alone is not
+  sufficient: a label holding the right amount of material in the wrong place
+  needs moving rather than resizing, and the sign of a negligible count
+  difference is arbitrary.
 
 Reporting the ceiling explicitly prevents search continuing against a limit
 imposed by the registration rather than by the correction.

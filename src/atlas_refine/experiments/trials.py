@@ -39,7 +39,7 @@ COMPARISON_FIELDS = (
     "excess_median_depth",
     "excess_surface_fraction",
     "excess_largest_component",
-    "recall_ceiling",
+    "subtractive_recall_ceiling",
 )
 
 #: Typical spread of each field, used to weight the distance so that no single
@@ -50,7 +50,7 @@ _FIELD_SCALE = {
     "excess_median_depth": 3.00,
     "excess_surface_fraction": 0.30,
     "excess_largest_component": 0.30,
-    "recall_ceiling": 0.15,
+    "subtractive_recall_ceiling": 0.15,
 }
 
 

@@ -198,8 +198,13 @@ class TestBenchmark:
             report.candidate_mean_dice - report.incumbent_mean_dice[report.best_incumbent]
         )
 
-    def test_a_family_duplicating_an_incumbent_does_not_qualify(self):
-        """A new family must beat the incumbents, not merely equal them."""
+    def test_a_family_matching_an_incumbent_still_qualifies(self):
+        """Admission is permissive by design.
+
+        A family that ties an incumbent on the cohort mean may still be the only
+        one that works on an atypical specimen, so it is admitted and ranked at
+        selection time rather than discarded here.
+        """
         from atlas_refine.algorithms.intensity import ContrastNormalisedThreshold
 
         class Duplicate(ContrastNormalisedThreshold):
@@ -209,6 +214,26 @@ class TestBenchmark:
         report = benchmark(Duplicate(), ["s1", "s2"], loader,
                            incumbents=["contrast_threshold"])
         assert report.improvement == pytest.approx(0.0, abs=1e-9)
+        assert report.qualifies
+
+    def test_a_family_worse_than_every_incumbent_does_not_qualify(self):
+        """Permissive is not unconditional: a regression is still refused."""
+
+        class Worse(RefinementAlgorithm):
+            name = "worse_than_incumbents"
+            description = "Discards most of the label, scoring below any incumbent."
+
+            @property
+            def parameters(self):
+                return (Parameter("keep", [0.0], "Fraction retained, test only."),)
+
+            def apply(self, image, label, **params):
+                mask = np.zeros_like(label.data, dtype="uint8")
+                mask[0, 0, 0] = 1
+                return label.with_data(mask)
+
+        report = benchmark(Worse(), ["s1", "s2"], loader, incumbents=["contrast_threshold"])
+        assert report.improvement < 0
         assert not report.qualifies
 
     def test_a_strictly_better_family_qualifies(self):

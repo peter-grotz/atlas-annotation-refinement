@@ -5,21 +5,31 @@ disagree with its propagated label in a way none of them addresses. An agent
 working the loop should be able to author a new family and install it durably
 rather than applying a one-off script whose reasoning is lost.
 
-Admission is gated. A candidate family must conform to the interface, behave
-correctly under adversarial inputs, demonstrably outperform every incumbent on
-the admissible annotations, and arrive with a stated rationale. A family that
-merely runs is not admitted, because an unjustified family enlarges the search
-space for every subsequent structure without improving it.
+Admission is deliberately permissive. A family is admitted on the evidence it
+actually has, and the recorded track states what its output may be used for. A
+family fitted on a single annotation is admitted as a starting point, because
+the alternative is annotating the remaining cohort from scratch and an annotator
+reviews every voxel of the result anyway. It is promoted when it survives
+annotations excluded from the fit.
+
+What is enforced is correctness rather than quality: a family must conform to
+the interface and behave sanely under adversarial inputs, since those failures
+produce plausible output rather than an error. Everything else is recorded, not
+refused.
+
+Every attempt is written to the trial log, whether admitted or rejected. The
+failures are the more valuable half, because the reason a family fails on one
+error signature usually holds for every structure presenting a similar one.
 
 Workflow::
 
     scaffold("my_family")                    # writes a template
     # author the implementation and RATIONALE in that file
-    contribute("path/to/my_family.py", specimens, loader)
+    contribute("path/to/my_family.py", specimens, loader, structure="...", log=log)
 
-On admission the module is installed under ``algorithms/contributed/``, a
-rationale record is written to ``docs/algorithms/``, and a regression test is
-generated pinning the reported result.
+On admission the module is installed under ``algorithms/contributed/``, where it
+is discovered automatically; a rationale record is written to
+``docs/algorithms/``; a regression test is generated; and a trial is appended.
 """
 
 from __future__ import annotations
@@ -35,7 +45,8 @@ from typing import Mapping, Sequence
 
 import numpy as np
 
-from ..evaluate.search import Loader, check_admissible, fit, scores
+from ..evaluate.search import Loader, check_admissible, fit, measure_transfer, scores
+from ..experiments.trials import TrialLog
 from ..io.volumes import Volume
 from .base import REGISTRY, RefinementAlgorithm
 
@@ -43,9 +54,26 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 CONTRIBUTED = PACKAGE_ROOT / "contributed"
 REPO_ROOT = PACKAGE_ROOT.parents[2]
 
-#: Minimum mean-Dice improvement over the best incumbent for admission.
-#: Smaller margins are within the noise of a handful of annotations.
-MIN_IMPROVEMENT = 0.002
+#: Admission tracks. A family is admitted on the evidence it actually has, and
+#: the track states what its output may be used for rather than gating on a
+#: single universal bar.
+#:
+#:   starting_point  Improves on the annotations available, including a single
+#:                   one. Output seeds manual refinement, where an annotator
+#:                   reviews every voxel, so the risk of an imperfect fit is
+#:                   bounded and the alternative is annotating from scratch.
+#:   validated       Holds on annotations excluded from the fit. Output may be
+#:                   consumed as data without review.
+#:
+#: A family enters as `starting_point` and is promoted when the evidence
+#: arrives; promotion records a new trial rather than rewriting the old one.
+TRACKS = ("starting_point", "validated")
+
+#: Improvement over the best incumbent required for the `starting_point` track.
+#: Set at zero deliberately: a family that merely matches an incumbent on the
+#: cohort mean may still be the only one that works on an atypical specimen, and
+#: discarding it forecloses that. Ranking happens at selection time, not here.
+MIN_IMPROVEMENT = 0.0
 
 
 class ContributionRejected(ValueError):
@@ -109,12 +137,14 @@ class BenchmarkReport:
 @dataclass(frozen=True)
 class Contribution:
     name: str
+    track: str
     installed_at: str
     contributed_utc: str
     n_parameters: int
     rationale: dict
     validation: dict
     benchmark: dict
+    trial_id: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -375,52 +405,82 @@ def contribute(
     specimens: Sequence[str],
     loader: Loader,
     *,
+    structure: str = "unspecified",
+    held_out: Sequence[str] = (),
     incumbents: Sequence[str] | None = None,
+    log: TrialLog | None = None,
     install: bool = True,
-    min_improvement: float = MIN_IMPROVEMENT,
+    notes: str = "",
 ) -> Contribution:
     """Validate, benchmark, and admit a candidate family.
 
     Args:
         module_path: File authored from :func:`scaffold`.
-        specimens: Independent annotations to fit and compare on.
+        specimens: Independent annotations to fit on.
         loader: Supplies ``(image, label, reference)`` per specimen.
-        incumbents: Families to compare against. All registered families by
-            default.
+        structure: Structure the family was authored against, recorded on the
+            trial so later retrieval can be filtered.
+        held_out: Annotations excluded from the fit. Supplying any promotes the
+            family to the ``validated`` track if it holds on them.
+        incumbents: Families to compare against. All registered by default.
+        log: Trial log to append to. Both admission and rejection are recorded.
         install: Copy the module into the package and write the records.
-        min_improvement: Required mean-Dice margin over the best incumbent.
+        notes: The authoring agent's reasoning, recorded on the trial.
 
     Raises:
-        ContributionRejected: If validation fails or the margin is not met.
-            Nothing is installed in that case.
+        ContributionRejected: If the module cannot be loaded or fails the
+            correctness checks. Nothing is installed, but the attempt is still
+            logged when a log is supplied.
     """
     algorithm, rationale = load_candidate(module_path)
 
     image, label, _ = loader(specimens[0])
     report = validate(algorithm, image, label)
     if not report.passed:
-        raise ContributionRejected(
-            "validation failed:\n  " + "\n  ".join(report.failures)
-        )
+        if log is not None:
+            log.record(
+                structure=structure, specimens=list(specimens), family=algorithm.name,
+                params={}, signature={}, scores={}, outcome="rejected",
+                reason="Failed correctness validation: " + "; ".join(report.failures),
+                notes=notes,
+            )
+        raise ContributionRejected("validation failed:\n  " + "\n  ".join(report.failures))
 
     marks = benchmark(algorithm, specimens, loader, incumbents=incumbents)
-    if marks.improvement < min_improvement:
-        raise ContributionRejected(
-            f"'{algorithm.name}' scores {marks.candidate_mean_dice:.4f} against "
-            f"{marks.best_incumbent or 'no incumbent'} at {marks.incumbent_mean_dice.get(marks.best_incumbent, 0.0):.4f} "
-            f"(improvement {marks.improvement:+.4f}, required {min_improvement:+.4f}). "
-            f"An existing family is sufficient; use it rather than enlarging the "
-            f"search space."
+
+    track, evidence = "starting_point", "in-sample"
+    if held_out:
+        transfer = measure_transfer(algorithm, marks.candidate_params, specimens, held_out, loader)
+        evidence = "held-out"
+        if transfer.generalises:
+            track = "validated"
+
+    trial_id = ""
+    if log is not None:
+        trial = log.record(
+            structure=structure,
+            specimens=list(specimens),
+            family=algorithm.name,
+            params=marks.candidate_params,
+            signature={},
+            scores={"dice": marks.candidate_mean_dice, "improvement": marks.improvement},
+            outcome="admitted",
+            reason=rationale.target_signature,
+            evidence=evidence,
+            notes=notes,
         )
+        trial_id = trial.trial_id
 
     record = Contribution(
         name=algorithm.name,
+        track=track,
         installed_at=str(CONTRIBUTED / f"{algorithm.name}.py") if install else "",
         contributed_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         n_parameters=algorithm.n_parameters,
         rationale=asdict(rationale),
         validation={"checks": report.checks, "failures": report.failures},
         benchmark=asdict(marks),
+        trial_id=trial_id,
     )
     if install:
         _install(Path(module_path), algorithm, record)
@@ -455,7 +515,7 @@ def _render_record(algorithm: RefinementAlgorithm, record: Contribution) -> str:
 
 {algorithm.description}
 
-Contributed {record.contributed_utc} · {record.n_parameters} free parameter(s)
+Contributed {record.contributed_utc} · track **{record.track}** · {record.n_parameters} free parameter(s)
 
 ## Target signature
 

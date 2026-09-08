@@ -325,6 +325,7 @@ src/atlas_refine/
     algorithms/      correction families, their registry, and the
                      gated framework for authoring new ones
     evaluate/        fitting, transfer measurement, admissibility, leave-one-out
+    experiments/     signature-indexed trial log
     cli.py
 tests/
 config/
@@ -334,56 +335,61 @@ docs/
 ## Authoring a new correction family
 
 Where no existing family addresses a measured error signature, a new one can be
-authored and installed durably. Admission is gated, because an unjustified
-family enlarges the search space for every subsequent structure without
-improving it. A candidate must conform to the interface, behave correctly under
-adversarial inputs, outperform every admissible incumbent on the available
-annotations, and arrive with a stated rationale.
+authored and installed durably. Admission is deliberately permissive: a family
+is admitted on the evidence it has, and a recorded track states what its output
+may be used for.
 
 ```python
 from atlas_refine.algorithms import contribute, scaffold
 
-scaffold("my_family")                              # writes a template module
-# author the implementation and RATIONALE in that file
-record = contribute("my_family.py", specimens, loader)
+scaffold("my_family")                    # writes a template with a RATIONALE stub
+# author the implementation and rationale in that file
+record = contribute("my_family.py", specimens, loader, structure="...", log=log)
 ```
 
-`contribute` runs three gates in order and installs nothing unless all pass.
+Installed under `src/atlas_refine/algorithms/contributed/`, where every module
+is imported at load time, so a family is available to `fit`, `measure_transfer`,
+and `leave_one_out` with no registration step.
 
-**Interface and behaviour.** The candidate must return a binary mask on the
-input grid and in the input frame, leave its arguments unmodified, produce the
-same output twice from the same inputs, return an empty result for an empty
-label, and not raise on a structure too thin to have an interior core. Each of
-these, when violated, yields plausible output rather than an error. Thresholds
-stated as absolute intensities are also rejected, since they cannot transfer
-between acquisitions.
+### What is enforced
 
-**Evidence.** The candidate and every incumbent admissible at the current
-annotation count are fitted on the same annotations, so the comparison reflects
-the family rather than a difference in tuning effort. Admission requires a
-margin over the best incumbent; a family that merely matches one is refused,
-with the recommendation to use the incumbent.
+Correctness, not quality. A family must return a binary mask on the input grid
+and frame, leave its arguments unmodified, produce the same result twice, return
+empty for an empty label, and tolerate a structure too thin to have an interior
+core. Thresholds stated as absolute intensities are rejected, since they cannot
+transfer between acquisitions. These are the failures that yield plausible
+output rather than an error; everything else is recorded rather than refused.
 
-**Rationale.** Three statements are required and are validated as substantive:
-the error signature the family targets, the specific reason each relevant
-incumbent fails on that signature, and the conditions under which the family
-should not be selected. The last is what allows the family to be matched to a
-signature later rather than tried blindly.
+### Tracks
 
-On admission the module is installed under
-`src/atlas_refine/algorithms/contributed/`, where it is discovered
-automatically, and two records are written:
+| track | admitted when | output may be used for |
+|---|---|---|
+| `starting_point` | it improves on the annotations available, including a single one | seeding manual refinement, where an annotator reviews every voxel |
+| `validated` | it holds on annotations excluded from the fit | labels consumed as data without review |
 
+A family fitted on one annotation enters as `starting_point`. That is the
+intended path rather than a concession: the alternative is annotating the rest
+of the cohort from scratch, and an imperfect draft still leaves less to fix. It
+is promoted when further annotations allow a held-out measurement.
+
+### The trial log
+
+Every attempt is appended to `experiments/trials.jsonl` — admitted, rejected, or
+merely explored — indexed by **measured error signature** rather than by
+structure name, since anatomically unrelated structures with similar signatures
+call for similar corrections.
+
+```python
+log.families_tried(signature.to_dict())    # per family: outcomes and recorded reasons
 ```
-docs/algorithms/<name>.md        rationale, and the benchmark at admission
-docs/algorithms/<name>.json      the same as a machine-readable record
-tests/contributed/test_<name>.py generated regression test
-```
 
-The generated test pins the interface and parameter count so later edits cannot
-silently change either. The recorded benchmark is explicitly labelled as
-reflecting the annotations available at admission, and as superseded by any
-later transfer or leave-one-out measurement.
+The rejections carry the weight. A recorded reason such as *"inside a thick
+high-intensity structure the local mean is the structure itself, so the ratio
+flattens"* rules out a family for every future structure presenting that
+signature, where a bare score would prevent nothing. `docs/algorithms/INDEX.md`
+renders the same record, including a *Recorded dead ends* section.
+
+See [docs/authoring.md](docs/authoring.md) for the full workflow.
 
 ### Interface
 

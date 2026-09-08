@@ -353,12 +353,20 @@ and `leave_one_out` with no registration step.
 
 ### What is enforced
 
-Correctness, not quality. A family must return a binary mask on the input grid
+Correctness, and that the rationale was actually written. Not quality. A family must return a binary mask on the input grid
 and frame, leave its arguments unmodified, produce the same result twice, return
 empty for an empty label, and tolerate a structure too thin to have an interior
 core. Thresholds stated as absolute intensities are rejected, since they cannot
 transfer between acquisitions. These are the failures that yield plausible
-output rather than an error; everything else is recorded rather than refused.
+output rather than an error.
+
+The rationale is also checked against the scaffold's own prompt text and refused
+if it has not been replaced. A length threshold cannot distinguish a considered
+justification from boilerplate, so the boilerplate is rejected by identity
+instead — comparing word overlap rather than requiring an exact match, so that
+lightly editing the prompt does not defeat it.
+
+Everything else is recorded rather than refused.
 
 ### Tracks
 

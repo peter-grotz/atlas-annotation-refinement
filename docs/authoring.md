@@ -83,6 +83,11 @@ label, and tolerate a structure too thin to have an interior core. Those
 failures produce plausible output rather than an error, which is why they are
 checked rather than trusted.
 
+The rationale must also differ from the scaffold's prompt text. The template is
+deliberately inadmissible until written: a well-formed record that says nothing
+is worse than none, because it is indistinguishable in structure from a
+considered one.
+
 Everything else is recorded rather than refused.
 
 ### Tracks

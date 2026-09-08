@@ -10,6 +10,7 @@ import pytest
 from atlas_refine.algorithms import REGISTRY
 from atlas_refine.algorithms.base import Parameter, RefinementAlgorithm
 from atlas_refine.algorithms.contribute import (
+    PLACEHOLDERS,
     ContributionRejected,
     Rationale,
     benchmark,
@@ -61,6 +62,29 @@ class TestRationale:
                 limitations="short too",
             )
 
+    def test_rejects_the_unedited_scaffold_prompt(self):
+        """A length check cannot tell boilerplate from a rationale, so the
+        prompt text itself is refused."""
+        with pytest.raises(ContributionRejected, match="scaffold prompt"):
+            Rationale(**PLACEHOLDERS)
+
+    def test_rejects_a_lightly_edited_prompt(self):
+        """Reordering or trimming the prompt must not defeat the check."""
+        lightly_edited = {
+            "target_signature": "Using the quantities reported by characterize(), "
+            "describe the error signature this addresses.",
+            "why_incumbents_insufficient": PLACEHOLDERS["why_incumbents_insufficient"],
+            "limitations": PLACEHOLDERS["limitations"],
+        }
+        with pytest.raises(ContributionRejected, match="scaffold prompt"):
+            Rationale(**lightly_edited)
+
+    def test_scaffolded_module_is_not_admissible_until_written(self, tmp_path: Path):
+        """The template must fail the gate it documents, or the gate is theatre."""
+        path = scaffold("unwritten_family", tmp_path)
+        with pytest.raises(ContributionRejected, match="scaffold prompt"):
+            load_candidate(path)
+
     def test_accepts_full_statements(self):
         rationale = Rationale(
             target_signature="Over-coverage forming a surface shell with intensity "
@@ -95,11 +119,23 @@ class TestScaffold:
         with pytest.raises(ContributionRejected, match="already exists"):
             scaffold("my_family", tmp_path)
 
-    def test_scaffolded_module_loads_and_is_importable(self, tmp_path: Path):
+    def test_scaffolded_module_is_valid_python_with_the_expected_class(self, tmp_path: Path):
+        """The template must be syntactically complete, so the author edits
+        prose and logic rather than fixing the scaffold."""
+        import ast
+
         path = scaffold("loadable_family", tmp_path)
-        algorithm, rationale = load_candidate(path)
-        assert algorithm.name == "loadable_family"
-        assert isinstance(rationale, Rationale)
+        tree = ast.parse(path.read_text())
+        classes = [n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+        assert classes == ["LoadableFamily"]
+        assigned = [
+            t.id
+            for n in ast.walk(tree)
+            if isinstance(n, ast.Assign)
+            for t in n.targets
+            if isinstance(t, ast.Name)
+        ]
+        assert "RATIONALE" in assigned
 
 
 class TestValidation:

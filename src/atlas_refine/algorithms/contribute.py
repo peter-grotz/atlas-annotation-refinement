@@ -37,6 +37,7 @@ from __future__ import annotations
 import importlib.util
 import inspect
 import json
+import re
 import shutil
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -80,6 +81,41 @@ class ContributionRejected(ValueError):
     """Raised when a candidate family does not qualify for admission."""
 
 
+#: Prompt text written into a scaffolded module. Used both to build the template
+#: and to detect a rationale that was never written, so the two cannot drift.
+PLACEHOLDERS = {
+    "target_signature": (
+        "Describe the error signature this addresses, using the quantities "
+        "reported by characterize(): over- or under-coverage, intensity "
+        "separation, error depth and topology."
+    ),
+    "why_incumbents_insufficient": (
+        "State which existing families were considered and the specific reason "
+        "each fails on this signature."
+    ),
+    "limitations": (
+        "State when this family should not be selected, including any "
+        "structure geometry or contrast regime where it degrades the result."
+    ),
+}
+
+#: Word overlap with the placeholder above which a field counts as unedited.
+_PLACEHOLDER_OVERLAP = 0.8
+
+
+def _looks_like_placeholder(text: str, placeholder: str) -> bool:
+    """Whether a field is the scaffold prompt rather than a written rationale.
+
+    Compares word overlap rather than requiring an exact match, so that
+    reordering or lightly editing the prompt does not defeat the check.
+    """
+    words = set(re.findall(r"[a-z]+", text.lower()))
+    prompt = set(re.findall(r"[a-z]+", placeholder.lower()))
+    if not words:
+        return True
+    return len(words & prompt) / len(words) >= _PLACEHOLDER_OVERLAP
+
+
 @dataclass(frozen=True)
 class Rationale:
     """Why a new family is needed, and when it should not be used.
@@ -100,12 +136,20 @@ class Rationale:
     references: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        for name in ("target_signature", "why_incumbents_insufficient", "limitations"):
+        for name, placeholder in PLACEHOLDERS.items():
             value = getattr(self, name)
             if not isinstance(value, str) or len(value.strip()) < 40:
                 raise ContributionRejected(
                     f"Rationale.{name} must be a substantive statement "
                     f"(at least 40 characters); got {value!r}"
+                )
+            if _looks_like_placeholder(value, placeholder):
+                raise ContributionRejected(
+                    f"Rationale.{name} is still the scaffold prompt. A length "
+                    f"check cannot tell a considered rationale from boilerplate, "
+                    f"so the prompt itself is refused: state what this family "
+                    f"targets, why the incumbents fail on it, and when not to "
+                    f"use it."
                 )
 
 
@@ -171,21 +215,12 @@ from atlas_refine.algorithms.base import REGISTRY, Parameter, RefinementAlgorith
 from atlas_refine.algorithms.contribute import Rationale
 from atlas_refine.io.volumes import Volume, background_level
 
-#: Required for admission. Every field must be a substantive statement.
+#: Required for admission. Replace every field: the prompts below are refused,
+#: because a length check cannot distinguish boilerplate from a real rationale.
 RATIONALE = Rationale(
-    target_signature=(
-        "Describe the error signature this addresses, using the quantities "
-        "reported by characterize(): over- or under-coverage, intensity "
-        "separation, error depth and topology."
-    ),
-    why_incumbents_insufficient=(
-        "State which existing families were considered and the specific reason "
-        "each fails on this signature."
-    ),
-    limitations=(
-        "State when this family should not be selected, including any "
-        "structure geometry or contrast regime where it degrades the result."
-    ),
+    target_signature="{ph_target}",
+    why_incumbents_insufficient="{ph_why}",
+    limitations="{ph_limits}",
 )
 
 
@@ -231,7 +266,15 @@ def scaffold(name: str, directory: str | Path | None = None) -> Path:
     path = Path(directory or ".") / f"{name}.py"
     if path.exists():
         raise ContributionRejected(f"{path} already exists")
-    path.write_text(TEMPLATE.format(name=name, cls=cls))
+    path.write_text(
+        TEMPLATE.format(
+            name=name,
+            cls=cls,
+            ph_target=PLACEHOLDERS["target_signature"],
+            ph_why=PLACEHOLDERS["why_incumbents_insufficient"],
+            ph_limits=PLACEHOLDERS["limitations"],
+        )
+    )
     return path
 
 
@@ -239,11 +282,25 @@ def scaffold(name: str, directory: str | Path | None = None) -> Path:
 # validation
 
 
-def validate(algorithm: RefinementAlgorithm, image: Volume, label: Volume) -> ValidationReport:
+def validate(
+    algorithm: RefinementAlgorithm,
+    image: Volume,
+    label: Volume,
+    *,
+    source: str | None = None,
+) -> ValidationReport:
     """Check interface conformance and behaviour under adversarial inputs.
 
     These are the properties whose violation produces plausible but wrong
     output rather than an error.
+
+    Args:
+        algorithm: Candidate to check.
+        image: Representative specimen intensities.
+        label: Representative propagated label on the same grid.
+        source: Module text, for the checks that inspect the implementation.
+            Supply this for a candidate loaded from a file path: such a class
+            has no resolvable source file and :func:`inspect.getsource` raises.
     """
     checks: dict[str, bool] = {}
     failures: list[str] = []
@@ -316,10 +373,20 @@ def validate(algorithm: RefinementAlgorithm, image: Volume, label: Volume) -> Va
         except Exception as exc:  # noqa: BLE001
             record("grid_endpoints_run", False, f"raised at a grid endpoint: {exc}")
 
-    source = inspect.getsource(type(algorithm))
-    record("no_absolute_intensity_literals",
-           not any(token in source for token in ("> 4000", "> 5000", "> 6000")),
-           "thresholds must be relative to per-specimen statistics, not absolute")
+    if source is None:
+        try:
+            source = inspect.getsource(type(algorithm))
+        except (TypeError, OSError):
+            source = None
+    if source is None:
+        checks["no_absolute_intensity_literals"] = True  # not inspectable, not a failure
+    else:
+        record(
+            "no_absolute_intensity_literals",
+            not re.search(r">\s*\d{4,}", source),
+            "thresholds must be relative to per-specimen intensity statistics, "
+            "not absolute values, or they will not transfer between acquisitions",
+        )
 
     return ValidationReport(checks, failures)
 
@@ -435,7 +502,7 @@ def contribute(
     algorithm, rationale = load_candidate(module_path)
 
     image, label, _ = loader(specimens[0])
-    report = validate(algorithm, image, label)
+    report = validate(algorithm, image, label, source=Path(module_path).read_text())
     if not report.passed:
         if log is not None:
             log.record(

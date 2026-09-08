@@ -433,6 +433,18 @@ annotations automatically. The `description` is what an agent reads when
 deciding whether the family suits a measured error signature, so it should state
 the conditions under which the family applies rather than what it computes.
 
+## Testing
+
+```bash
+PYTHONPATH=src python3 -m pytest tests -q
+```
+
+The suite covers geometry and unit assertions, annotation provenance rules, the
+error signature battery, correction families and their registry, fitting and
+admissibility, the trial log and signature retrieval, the contribution gate, and
+the command-line interface end to end. Registration is exercised only through
+its interface; it depends on ANTsPy and real volumes and is not covered.
+
 ## License
 
 MIT

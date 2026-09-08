@@ -14,9 +14,11 @@ whole cohort rather than correcting each label afterwards.
 
 from __future__ import annotations
 
+import os
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Iterator, Sequence
 
 import ants
 import numpy as np
@@ -43,12 +45,65 @@ class MetricTerm:
 
 @dataclass(frozen=True)
 class RegistrationConfig:
+    """Deformable stage settings.
+
+    Attributes:
+        random_seed: Seed for the metric's stochastic sampling. Registration is
+            otherwise not reproducible: repeated runs on identical inputs
+            produce different transforms, because the similarity metric samples
+            voxels at random.
+
+            Must be non-zero. The underlying implementation treats a seed of
+            zero as an instruction to seed from the clock, so it silently yields
+            non-reproducible results. None disables seeding for the same effect.
+        threads: Value for ``ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS``. Multithreaded
+            reduction introduces its own non-determinism, so a single thread is
+            required for bit-identical results. None leaves the environment
+            untouched and trades reproducibility for speed.
+    """
+
     transform: str = "SyNOnly"
     iterations: tuple[int, ...] = (40, 20, 10)
     gradient_step: float = 0.2
     flow_sigma: float = 3.0
     total_sigma: float = 0.0
     image_metric: str = "mattes"
+    random_seed: int | None = 1
+    threads: int | None = 1
+
+    def __post_init__(self) -> None:
+        if self.random_seed == 0:
+            raise ValueError(
+                "random_seed=0 means 'seed from the clock' and produces "
+                "non-reproducible registrations. Use a non-zero seed, or None "
+                "to disable seeding explicitly."
+            )
+
+
+@contextmanager
+def _deterministic(config: RegistrationConfig) -> Iterator[None]:
+    """Apply the environment settings that make registration reproducible.
+
+    The seed must be set in the environment: passing ``random_seed`` to the
+    registration call alone does not fix the sampling, as the underlying
+    implementation reads it from ``ANTS_RANDOM_SEED``. Previous values are
+    restored on exit so the setting does not leak into unrelated work.
+    """
+    overrides = {}
+    if config.random_seed is not None:
+        overrides["ANTS_RANDOM_SEED"] = str(config.random_seed)
+    if config.threads is not None:
+        overrides["ITK_GLOBAL_DEFAULT_NUMBER_OF_THREADS"] = str(config.threads)
+    previous = {k: os.environ.get(k) for k in overrides}
+    os.environ.update(overrides)
+    try:
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 @dataclass(frozen=True)
@@ -60,17 +115,23 @@ class Registration:
     target_frame: str
     source_frame: str
 
-    def save(self, directory: str | Path, prefix: str) -> dict[str, str]:
+    def save(self, directory: str | Path, prefix: str) -> dict[str, list[str]]:
+        """Copy both transform chains to a durable location.
+
+        Returns the saved paths per chain, in the order the chain requires. A
+        chain is typically a warp field plus an affine, and both are needed to
+        apply it, so every element is returned rather than a representative.
+        """
         import shutil
 
         directory = Path(directory)
         directory.mkdir(parents=True, exist_ok=True)
-        saved: dict[str, str] = {}
+        saved: dict[str, list[str]] = {"forward": [], "inverse": []}
         for label, paths in (("forward", self.forward), ("inverse", self.inverse)):
             for path in paths:
-                name = f"{prefix}_{label}_{Path(path).name}"
-                shutil.copy2(path, directory / name)
-                saved.setdefault(label, str(directory / name))
+                destination = directory / f"{prefix}_{label}_{Path(path).name}"
+                shutil.copy2(path, destination)
+                saved[label].append(str(destination))
         return saved
 
 
@@ -115,25 +176,32 @@ def register(
 
     fixed_image, moving_image = prepare(fixed), prepare(moving)
 
-    affine = ants.registration(fixed=fixed_image, moving=moving_image, type_of_transform="Affine")
-
     multivariate = [
         (term.metric, _to_ants(term.fixed), _to_ants(term.moving), float(term.weight), 0)
         for term in extra_metrics
     ]
 
-    result = ants.registration(
-        fixed=fixed_image,
-        moving=moving_image,
-        type_of_transform=config.transform,
-        initial_transform=affine["fwdtransforms"][0],
-        multivariate_extras=multivariate or None,
-        reg_iterations=config.iterations,
-        grad_step=config.gradient_step,
-        flow_sigma=config.flow_sigma,
-        total_sigma=config.total_sigma,
-        aff_metric=config.image_metric,
-    )
+    with _deterministic(config):
+        affine = ants.registration(
+            fixed=fixed_image,
+            moving=moving_image,
+            type_of_transform="Affine",
+            aff_metric=config.image_metric,
+            random_seed=config.random_seed,
+        )
+        result = ants.registration(
+            fixed=fixed_image,
+            moving=moving_image,
+            type_of_transform=config.transform,
+            initial_transform=affine["fwdtransforms"][0],
+            multivariate_extras=multivariate or None,
+            reg_iterations=config.iterations,
+            grad_step=config.gradient_step,
+            flow_sigma=config.flow_sigma,
+            total_sigma=config.total_sigma,
+            aff_metric=config.image_metric,
+            random_seed=config.random_seed,
+        )
     return Registration(
         forward=list(result["fwdtransforms"]),
         inverse=list(result["invtransforms"]),

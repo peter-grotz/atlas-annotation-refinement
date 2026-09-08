@@ -442,8 +442,14 @@ PYTHONPATH=src python3 -m pytest tests -q
 The suite covers geometry and unit assertions, annotation provenance rules, the
 error signature battery, correction families and their registry, fitting and
 admissibility, the trial log and signature retrieval, the contribution gate, and
-the command-line interface end to end. Registration is exercised only through
-its interface; it depends on ANTsPy and real volumes and is not covered.
+the command-line interface end to end. Registration is covered against synthetic phantoms with a known displacement,
+including reproducibility across repeated runs.
+
+Registration is reproducible only when seeded. The similarity metric samples
+voxels stochastically and the reduction is multithreaded, so both a non-zero
+seed and a single thread are required; `RegistrationConfig` sets both by
+default and rejects a seed of zero, which the underlying implementation treats
+as an instruction to seed from the clock.
 
 ## License
 

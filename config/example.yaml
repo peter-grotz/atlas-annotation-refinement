@@ -1,0 +1,42 @@
+# Example configuration. Paths are relative to the working directory.
+# No credentials belong in this file; supply them through the environment.
+
+paths:
+  atlas_template: atlas/template.nii.gz
+  atlas_parcellation: atlas/parcellation.nii.gz
+  specimens: data/specimens          # <specimens>/<id>/image.nii.gz
+  ground_truth: ground_truth
+  inbox: inbox
+  derived: derived
+
+geometry:
+  # Supply spacing explicitly where header unit codes are unreliable.
+  # Omit to read the header.
+  specimen_spacing: [20.0, 20.0, 20.0]
+  specimen_unit: um
+  atlas_spacing: [20.0, 20.0, 20.0]
+  atlas_unit: um
+
+registration:
+  transform: SyNOnly
+  iterations: [40, 20, 10]
+  gradient_step: 0.2
+  flow_sigma: 3.0
+  total_sigma: 0.0
+  image_metric: mattes
+  subtract_background: true
+
+structures:
+  # `label` indexes the atlas parcellation. `algorithm` names a registered
+  # correction family; parameters are fitted, not set here.
+  - name: example_structure
+    label: 1
+    algorithm: contrast_threshold
+    objective: mean        # or `min`, to maximise the worst specimen
+
+evaluation:
+  # Refuse to fit a family with more free parameters than there are
+  # independent annotations.
+  enforce_parameter_budget: true
+  # Run leave-one-out once this many independent annotations exist.
+  leave_one_out_threshold: 3

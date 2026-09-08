@@ -104,6 +104,20 @@ nonetheless produce a result that does not hold:
   subtractive correction could attain, so search terminates against limits
   imposed by the registration rather than continuing indefinitely.
 
+### Authoring, not only selecting
+
+Selection from a fixed registry is insufficient for the same reason a fixed
+pipeline is: the space of error signatures is not enumerable in advance. An
+agent working the loop must be able to author a family that does not yet exist
+and install it so that later structures inherit it.
+
+The risk this introduces is a proliferation of marginal families that widen the
+search space without improving results, and a loss of the reasoning that
+motivated each. Both are addressed by gating admission on measured improvement
+over the incumbents and on a recorded rationale, so the registry grows only
+where an existing family is demonstrably inadequate, and every entry carries the
+conditions under which it applies. See *Authoring a new correction family*.
+
 ### The role of accumulated negative results
 
 Most candidate corrections fail, and the reasons generalise across structures
@@ -308,7 +322,8 @@ src/atlas_refine/
                      ground-truth store with declared provenance
     registration/    two-stage registration; single-resampling label propagation
     characterize/    error signature battery
-    algorithms/      correction families and their registry
+    algorithms/      correction families, their registry, and the
+                     gated framework for authoring new ones
     evaluate/        fitting, transfer measurement, admissibility, leave-one-out
     cli.py
 tests/
@@ -316,12 +331,64 @@ config/
 docs/
 ```
 
-## Extending
+## Authoring a new correction family
 
-Correction families are the unit the agent selects among, so adding one widens
-the search space rather than changing the workflow. A new family subclasses
-`RefinementAlgorithm`, declares its free parameters and their search spaces, and
-registers itself:
+Where no existing family addresses a measured error signature, a new one can be
+authored and installed durably. Admission is gated, because an unjustified
+family enlarges the search space for every subsequent structure without
+improving it. A candidate must conform to the interface, behave correctly under
+adversarial inputs, outperform every admissible incumbent on the available
+annotations, and arrive with a stated rationale.
+
+```python
+from atlas_refine.algorithms import contribute, scaffold
+
+scaffold("my_family")                              # writes a template module
+# author the implementation and RATIONALE in that file
+record = contribute("my_family.py", specimens, loader)
+```
+
+`contribute` runs three gates in order and installs nothing unless all pass.
+
+**Interface and behaviour.** The candidate must return a binary mask on the
+input grid and in the input frame, leave its arguments unmodified, produce the
+same output twice from the same inputs, return an empty result for an empty
+label, and not raise on a structure too thin to have an interior core. Each of
+these, when violated, yields plausible output rather than an error. Thresholds
+stated as absolute intensities are also rejected, since they cannot transfer
+between acquisitions.
+
+**Evidence.** The candidate and every incumbent admissible at the current
+annotation count are fitted on the same annotations, so the comparison reflects
+the family rather than a difference in tuning effort. Admission requires a
+margin over the best incumbent; a family that merely matches one is refused,
+with the recommendation to use the incumbent.
+
+**Rationale.** Three statements are required and are validated as substantive:
+the error signature the family targets, the specific reason each relevant
+incumbent fails on that signature, and the conditions under which the family
+should not be selected. The last is what allows the family to be matched to a
+signature later rather than tried blindly.
+
+On admission the module is installed under
+`src/atlas_refine/algorithms/contributed/`, where it is discovered
+automatically, and two records are written:
+
+```
+docs/algorithms/<name>.md        rationale, and the benchmark at admission
+docs/algorithms/<name>.json      the same as a machine-readable record
+tests/contributed/test_<name>.py generated regression test
+```
+
+The generated test pins the interface and parameter count so later edits cannot
+silently change either. The recorded benchmark is explicitly labelled as
+reflecting the annotations available at admission, and as superseded by any
+later transfer or leave-one-out measurement.
+
+### Interface
+
+A family subclasses `RefinementAlgorithm`, declares its free parameters and
+their search spaces, and registers itself:
 
 ```python
 from atlas_refine.algorithms.base import REGISTRY, Parameter, RefinementAlgorithm

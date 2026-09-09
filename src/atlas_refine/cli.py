@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 
 from .algorithms import REGISTRY
-from .io.store import FILENAME_SPEC, GroundTruthStore, IntakeError
+from .io.store import FILENAME_SPEC, GroundTruthStore, IntakeError, parse_filename
 from .io.volumes import GeometryError, load_nifti
 
 
@@ -26,9 +26,6 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
 
 def cmd_ingest(args: argparse.Namespace) -> int:
     store = GroundTruthStore(args.store)
-    reference = load_nifti(
-        args.reference, frame=args.frame, spacing=args.spacing, unit=args.unit
-    )
     candidates = (
         sorted(Path(args.inbox).glob("*.seg.nrrd")) if args.inbox else [Path(p) for p in args.files]
     )
@@ -37,10 +34,31 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         print(f"\nexpected filenames:\n  {FILENAME_SPEC}")
         return 0
 
+    # An inbox generally holds annotations of several specimens, each of which
+    # must be checked against its own volume. A reference path containing
+    # "{sid}" is resolved per file from the specimen in its name; a plain path
+    # is used for every file, which is only correct for a single specimen.
+    per_specimen = "{sid}" in args.reference
+    references: dict[str, object] = {}
+
+    def reference_for(specimen: str):
+        key = specimen if per_specimen else ""
+        if key not in references:
+            path = args.reference.format(sid=specimen) if per_specimen else args.reference
+            frame = args.frame.format(sid=specimen)
+            references[key] = load_nifti(
+                path, frame=frame, spacing=args.spacing, unit=args.unit
+            )
+        return references[key]
+
     accepted = rejected = 0
     for path in candidates:
         try:
-            record = store.ingest(path, reference, overwrite=args.overwrite)
+            record = store.ingest(
+                path,
+                reference_for(parse_filename(path.name)["specimen"]),
+                overwrite=args.overwrite,
+            )
         except (IntakeError, GeometryError) as exc:
             rejected += 1
             print(f"REJECT  {path.name}\n        {exc}")
@@ -95,8 +113,15 @@ def main(argv: list[str] | None = None) -> int:
 
     ingest = sub.add_parser("ingest", help="Validate and admit manual annotations.")
     _add_common(ingest)
-    ingest.add_argument("--reference", required=True, help="Volume the annotations align to.")
-    ingest.add_argument("--frame", required=True, help="Coordinate frame name.")
+    ingest.add_argument(
+        "--reference",
+        required=True,
+        help="Volume the annotations align to. May contain '{sid}', resolved per "
+        "file from the specimen in its name, so one inbox can hold several specimens.",
+    )
+    ingest.add_argument(
+        "--frame", required=True, help="Coordinate frame name. May contain '{sid}'."
+    )
     ingest.add_argument("--inbox", help="Directory of candidate .seg.nrrd files.")
     ingest.add_argument("files", nargs="*", help="Individual files to ingest.")
     ingest.add_argument("--overwrite", action="store_true", help="Replace existing annotations.")

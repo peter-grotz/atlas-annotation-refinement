@@ -191,3 +191,67 @@ class TestArgumentHandling:
     def test_rejects_an_unknown_subcommand(self):
         with pytest.raises(SystemExit):
             main(["nonexistent"])
+
+
+class TestPerSpecimenReference:
+    """An inbox generally holds several specimens, each on its own grid."""
+
+    @staticmethod
+    def _specimen(root: Path, sid: str, size: int) -> None:
+        """A volume and a matching annotation, on a grid unique to this size."""
+        shape = (size, size, size)
+        data = np.full(shape, 1000.0, dtype="float32")
+        data[2 : size - 2, 2 : size - 2, 2 : size - 2] = 2000.0
+        header = nib.Nifti1Header()
+        header.set_xyzt_units(xyz="micron")
+        (root / sid).mkdir(parents=True, exist_ok=True)
+        nib.save(nib.Nifti1Image(data, AFFINE, header), str(root / sid / "image.nii.gz"))
+
+        mask = np.zeros(shape, dtype="uint8")
+        mask[3 : size - 3, 3 : size - 3, 3 : size - 3] = 1
+        nrrd.write(
+            str(root / "inbox" / f"{sid}__isocortex__pushed__PG__2026-01-01.seg.nrrd"),
+            mask,
+            {
+                "space": "left-posterior-superior",
+                "space directions": np.diag(SPACING),
+                "space origin": np.zeros(3),
+            },
+        )
+
+    def test_resolves_a_reference_per_specimen(self, tmp_path, capsys):
+        (tmp_path / "inbox").mkdir()
+        self._specimen(tmp_path, "100001", 16)
+        self._specimen(tmp_path, "100002", 20)
+
+        assert (
+            run(
+                "ingest",
+                "--store", str(tmp_path / "store"),
+                "--reference", str(tmp_path / "{sid}" / "image.nii.gz"),
+                "--frame", "spec-{sid}",
+                "--inbox", str(tmp_path / "inbox"),
+            )
+            == 0
+        )
+        out = capsys.readouterr().out
+        assert "2 ingested, 0 rejected" in out
+
+    def test_a_single_reference_rejects_the_other_specimen(self, tmp_path, capsys):
+        """Why the substitution is needed: one fixed reference cannot check both,
+        and the geometry check refuses the mismatch rather than mis-filing it."""
+        (tmp_path / "inbox").mkdir()
+        self._specimen(tmp_path, "100001", 16)
+        self._specimen(tmp_path, "100002", 20)
+
+        assert (
+            run(
+                "ingest",
+                "--store", str(tmp_path / "store"),
+                "--reference", str(tmp_path / "100001" / "image.nii.gz"),
+                "--frame", "spec",
+                "--inbox", str(tmp_path / "inbox"),
+            )
+            == 1
+        )
+        assert "1 ingested, 1 rejected" in capsys.readouterr().out

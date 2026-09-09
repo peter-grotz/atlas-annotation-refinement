@@ -330,6 +330,8 @@ src/atlas_refine/
     characterize/    error signature battery
     algorithms/      correction families, their registry, and the
                      gated framework for authoring new ones
+    analysis/        acquisition description, cohort comparison, boundary
+                     profiling, and structural context
     evaluate/        fitting, transfer measurement, admissibility, leave-one-out
     experiments/     signature-indexed trial log
     cli.py
@@ -432,6 +434,26 @@ further changes, and its parameter count is checked against the available
 annotations automatically. The `description` is what an agent reads when
 deciding whether the family suits a measured error signature, so it should state
 the conditions under which the family applies rather than what it computes.
+
+## Skills
+
+Four `SKILL.md` packages under `skills/` carry the interpretation that turns
+these measurements into decisions. They follow the Agent Skills open standard,
+so they are readable by any client that supports it rather than being tied to
+one.
+
+| skill | answers |
+|---|---|
+| `image-analysis` | What are this acquisition's properties, and which specimen should be annotated next? |
+| `neuroanatomy` | What does the structure border, and what does that rule out before anything is fitted? |
+| `segmentation-correction` | Which correction family suits this error signature, and does the fit transfer? |
+| `evidence-analysis` | What does this result actually support, and at what sample size? |
+
+The `analysis` package supplies the measurements; the skills supply how to read
+them. A number nobody knows how to interpret is not a capability, and the
+interpretation is where this workflow's failures have come from — a proxy metric
+pointing the wrong way, a correlation over three points, a family ruled out by
+anatomy but fitted anyway.
 
 ## Testing
 

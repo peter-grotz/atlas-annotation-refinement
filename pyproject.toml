@@ -34,3 +34,6 @@ target-version = "py310"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Tests import the package from the source tree, so it need not be installed
+# first. Without this, a fresh clone fails at collection rather than at a test.
+pythonpath = ["src"]

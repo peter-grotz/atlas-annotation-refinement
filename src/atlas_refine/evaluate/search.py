@@ -142,12 +142,17 @@ def fit(
     check_admissible(algorithm, specimens)
     cached = {s: loader(s) for s in specimens}
 
+    grid = list(algorithm.grid())
+    # Sweep specimen-outer so parameter-independent work is done once each.
+    by_params: list[dict[str, dict[str, float]]] = [{} for _ in grid]
+    for specimen, (image, label, reference) in cached.items():
+        with algorithm.specimen_context(image, label):
+            for index, params in enumerate(grid):
+                refined = algorithm.apply(image, label, **params)
+                by_params[index][specimen] = scores(refined.data, reference.data)
+
     trials: list[Trial] = []
-    for params in algorithm.grid():
-        per_specimen = {}
-        for specimen, (image, label, reference) in cached.items():
-            refined = algorithm.apply(image, label, **params)
-            per_specimen[specimen] = scores(refined.data, reference.data)
+    for params, per_specimen in zip(grid, by_params):
         values = [v["dice"] for v in per_specimen.values()]
         trials.append(Trial(params, per_specimen, round(float(np.mean(values)), 6),
                             round(float(np.min(values)), 6)))

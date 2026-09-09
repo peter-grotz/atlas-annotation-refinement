@@ -68,6 +68,26 @@ class Provenance:
     shape: list[int]
     voxels: int
     usable_for_fitting: bool
+    #: Why this annotation may or may not be used for fitting, stated on the
+    #: record so the constraint travels with the data rather than living in
+    #: documentation.
+    note: str = ""
+
+    @classmethod
+    def from_record(cls, record: dict) -> "Provenance":
+        """Build from a stored record, reporting unknown fields rather than
+        failing on them. Records written by a later version may carry fields
+        this one does not know; dropping them silently would hide a schema
+        change, so they are named."""
+        known = {f for f in cls.__dataclass_fields__}
+        unknown = set(record) - known
+        if unknown:
+            raise IntakeError(
+                f"provenance record carries unrecognised field(s) "
+                f"{sorted(unknown)}; it was written by a different version of "
+                f"this package"
+            )
+        return cls(**record)
 
 
 def parse_filename(name: str) -> dict[str, str]:
@@ -99,7 +119,7 @@ class GroundTruthStore:
 
     def provenance(self, structure: str, specimen: str) -> Provenance:
         record = json.loads((self.path(structure, specimen) / "provenance.json").read_text())
-        return Provenance(**record)
+        return Provenance.from_record(record)
 
     def specimens(self, structure: str, *, kind: Kind | None = None) -> list[str]:
         """Specimen ids holding an annotation, optionally filtered by kind."""
@@ -171,6 +191,16 @@ class GroundTruthStore:
             shape=list(mask.shape),
             voxels=count,
             usable_for_fitting=kind == "independent",
+            note=(
+                "Edited from an algorithm output. Measures the manual effort "
+                "remaining after automatic correction, not accuracy. Must be "
+                "excluded when fitting or validating the parameters that "
+                "produced its starting point."
+                if kind == "derived"
+                else "Edited from the propagated label or traced from scratch. "
+                "Independent of any algorithm parameter; usable for fitting "
+                "and validation."
+            ),
         )
 
         destination.mkdir(parents=True, exist_ok=True)

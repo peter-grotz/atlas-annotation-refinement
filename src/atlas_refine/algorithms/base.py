@@ -14,6 +14,7 @@ position between that specimen's background and its structure level does.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, Iterator, Mapping, Sequence
 
@@ -51,6 +52,30 @@ class RefinementAlgorithm(ABC):
     @abstractmethod
     def apply(self, image: Volume, label: Volume, **params: float) -> Volume:
         """Return a refined label on the same grid as ``label``."""
+
+    def prepare(self, image: Volume, label: Volume) -> dict[str, Any]:
+        """Quantities that depend on the specimen but not on the parameters.
+
+        A parameter sweep applies a family many times to the same specimen, so
+        anything derived from the image or label alone should be computed once.
+        Distance transforms in particular dominate runtime on full-resolution
+        volumes and are identical at every point in the grid.
+        """
+        return {}
+
+    @contextmanager
+    def specimen_context(self, image: Volume, label: Volume) -> Iterator[None]:
+        """Hold the result of :meth:`prepare` for the duration of a sweep."""
+        self._context = self.prepare(image, label)
+        try:
+            yield
+        finally:
+            self._context = {}
+
+    @property
+    def context(self) -> dict[str, Any]:
+        """Cached quantities for the specimen currently being swept, if any."""
+        return getattr(self, "_context", {})
 
     @property
     def n_parameters(self) -> int:

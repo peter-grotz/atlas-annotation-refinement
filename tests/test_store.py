@@ -61,6 +61,45 @@ class TestBasisKind:
         assert BASIS_KIND[basis] == "independent"
 
 
+class TestProvenanceRecords:
+    def test_reads_a_record_carrying_a_note(self):
+        from atlas_refine.io.store import Provenance
+
+        record = Provenance.from_record({
+            "specimen": "100001", "structure": "isocortex", "basis": "refined",
+            "kind": "derived", "annotator": "AB", "annotated": "2026-01-15",
+            "ingested_utc": "2026-01-15T00:00:00Z", "original_filename": "x.seg.nrrd",
+            "sha256": "0" * 64, "shape": [4, 4, 4], "voxels": 10,
+            "usable_for_fitting": False, "note": "why it is excluded",
+        })
+        assert record.kind == "derived"
+        assert record.note == "why it is excluded"
+
+    def test_a_record_without_a_note_still_reads(self):
+        from atlas_refine.io.store import Provenance
+
+        record = Provenance.from_record({
+            "specimen": "100001", "structure": "isocortex", "basis": "pushed",
+            "kind": "independent", "annotator": "AB", "annotated": "2026-01-15",
+            "ingested_utc": "2026-01-15T00:00:00Z", "original_filename": "x.seg.nrrd",
+            "sha256": "0" * 64, "shape": [4, 4, 4], "voxels": 10,
+            "usable_for_fitting": True,
+        })
+        assert record.note == ""
+
+    def test_an_unrecognised_field_is_named_rather_than_dropped(self):
+        from atlas_refine.io.store import Provenance
+
+        with pytest.raises(IntakeError, match="unrecognised field"):
+            Provenance.from_record({
+                "specimen": "100001", "structure": "isocortex", "basis": "pushed",
+                "kind": "independent", "annotator": "AB", "annotated": "2026-01-15",
+                "ingested_utc": "2026-01-15T00:00:00Z", "original_filename": "x.seg.nrrd",
+                "sha256": "0" * 64, "shape": [4, 4, 4], "voxels": 10,
+                "usable_for_fitting": True, "from_a_later_version": 1,
+            })
+
+
 class TestVolume:
     def test_rejects_implausible_spacing(self):
         with pytest.raises(GeometryError, match="plausible"):
@@ -136,6 +175,57 @@ class TestAdmissibility:
     def test_single_parameter_family_needs_one_annotation(self):
         algorithm = REGISTRY.create("contrast_threshold")
         check_admissible(algorithm, ["100001"])
+
+
+class TestSpecimenContext:
+    """The per-specimen cache is an optimisation; it must not change results."""
+
+    def _volumes(self):
+        data = np.full((16, 16, 16), 1000.0, dtype="float32")
+        data[3:13, 3:13, 3:13] = 1400.0
+        data[5:11, 5:11, 5:11] = 2000.0
+        image = Volume(
+            data=data, spacing=(20.0, 20.0, 20.0), unit="um",
+            affine=np.diag([-20.0, -20.0, 20.0, 1.0]), frame="test",
+        )
+        mask = np.zeros((16, 16, 16), dtype="uint8")
+        mask[3:13, 3:13, 3:13] = 1
+        return image, image.with_data(mask)
+
+    @pytest.mark.parametrize(
+        "name", ["contrast_threshold", "band_threshold", "hysteresis_threshold"]
+    )
+    def test_cached_and_uncached_results_agree(self, name):
+        algorithm = REGISTRY.create(name)
+        image, label = self._volumes()
+        for params in algorithm.grid():
+            uncached = algorithm.apply(image, label, **params)
+            with algorithm.specimen_context(image, label):
+                cached = algorithm.apply(image, label, **params)
+            assert np.array_equal(uncached.data, cached.data), params
+
+    def test_context_is_populated_then_cleared(self):
+        algorithm = REGISTRY.create("contrast_threshold")
+        image, label = self._volumes()
+        assert algorithm.context == {}
+        with algorithm.specimen_context(image, label):
+            assert set(algorithm.context) == {"background", "interior"}
+        assert algorithm.context == {}
+
+    def test_context_is_cleared_even_if_the_body_raises(self):
+        algorithm = REGISTRY.create("contrast_threshold")
+        image, label = self._volumes()
+        with pytest.raises(RuntimeError):
+            with algorithm.specimen_context(image, label):
+                raise RuntimeError("boom")
+        assert algorithm.context == {}
+
+    def test_a_family_without_a_prepare_hook_still_works(self):
+        algorithm = REGISTRY.create("morphological_cleanup")
+        image, label = self._volumes()
+        with algorithm.specimen_context(image, label):
+            assert algorithm.context == {}
+            algorithm.apply(image, label, **algorithm.defaults())
 
 
 class TestRegistry:

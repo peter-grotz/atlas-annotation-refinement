@@ -18,6 +18,30 @@ from ..io.volumes import Volume, background_level
 from .base import REGISTRY, Parameter, RefinementAlgorithm
 
 
+class _SpanNormalised(RefinementAlgorithm):
+    """Shared base for families whose thresholds are placed on the span between
+    the specimen's background and the label's interior level."""
+
+    def __init__(self, min_depth: int = 8) -> None:
+        self.min_depth = min_depth
+
+    def prepare(self, image: Volume, label: Volume) -> dict:
+        mask = label.data > 0
+        return {
+            "background": background_level(image),
+            "interior": interior_level(image, mask, self.min_depth),
+        }
+
+    def _levels(self, image: Volume, label: Volume) -> tuple[float, float]:
+        cached = self.context
+        if cached:
+            return cached["background"], cached["interior"]
+        return (
+            background_level(image),
+            interior_level(image, label.data > 0, self.min_depth),
+        )
+
+
 def interior_level(image: Volume, mask: np.ndarray, min_depth: int = 8) -> float:
     """Median intensity of a label's core.
 
@@ -34,7 +58,7 @@ def interior_level(image: Volume, mask: np.ndarray, min_depth: int = 8) -> float
 
 
 @REGISTRY.register
-class ContrastNormalisedThreshold(RefinementAlgorithm):
+class ContrastNormalisedThreshold(_SpanNormalised):
     """Retain label voxels above a threshold set by the specimen's own contrast.
 
     The threshold is placed a fixed fraction of the way from the modal
@@ -49,9 +73,6 @@ class ContrastNormalisedThreshold(RefinementAlgorithm):
     name = "contrast_threshold"
     description = "Threshold at a fraction of the background-to-interior span."
 
-    def __init__(self, min_depth: int = 8) -> None:
-        self.min_depth = min_depth
-
     @property
     def parameters(self) -> Sequence[Parameter]:
         return (
@@ -65,8 +86,7 @@ class ContrastNormalisedThreshold(RefinementAlgorithm):
     def apply(self, image: Volume, label: Volume, **params: float) -> Volume:
         image.assert_compatible(label)
         mask = label.data > 0
-        background = background_level(image)
-        interior = interior_level(image, mask, self.min_depth)
+        background, interior = self._levels(image, label)
         if not np.isfinite(interior):
             return label.with_data(mask.astype("uint8"))
         threshold = background + float(params["fraction"]) * (interior - background)
@@ -74,7 +94,7 @@ class ContrastNormalisedThreshold(RefinementAlgorithm):
 
 
 @REGISTRY.register
-class BandThreshold(RefinementAlgorithm):
+class BandThreshold(_SpanNormalised):
     """Retain label voxels whose intensity falls inside a band.
 
     Both bounds are expressed relative to the background-to-interior span.
@@ -84,9 +104,6 @@ class BandThreshold(RefinementAlgorithm):
 
     name = "band_threshold"
     description = "Retain voxels between a lower and upper normalised bound."
-
-    def __init__(self, min_depth: int = 8) -> None:
-        self.min_depth = min_depth
 
     @property
     def parameters(self) -> Sequence[Parameter]:
@@ -100,8 +117,7 @@ class BandThreshold(RefinementAlgorithm):
     def apply(self, image: Volume, label: Volume, **params: float) -> Volume:
         image.assert_compatible(label)
         mask = label.data > 0
-        background = background_level(image)
-        interior = interior_level(image, mask, self.min_depth)
+        background, interior = self._levels(image, label)
         if not np.isfinite(interior):
             return label.with_data(mask.astype("uint8"))
         span = interior - background
@@ -112,7 +128,7 @@ class BandThreshold(RefinementAlgorithm):
 
 
 @REGISTRY.register
-class HysteresisThreshold(RefinementAlgorithm):
+class HysteresisThreshold(_SpanNormalised):
     """Retain regions above a low bound that connect to a high-bound seed.
 
     Recovers parts of a structure whose intensity falls below a single threshold
@@ -122,9 +138,6 @@ class HysteresisThreshold(RefinementAlgorithm):
 
     name = "hysteresis_threshold"
     description = "Seed at a high bound, grow to a low bound within the label."
-
-    def __init__(self, min_depth: int = 8) -> None:
-        self.min_depth = min_depth
 
     @property
     def parameters(self) -> Sequence[Parameter]:
@@ -138,8 +151,7 @@ class HysteresisThreshold(RefinementAlgorithm):
     def apply(self, image: Volume, label: Volume, **params: float) -> Volume:
         image.assert_compatible(label)
         mask = label.data > 0
-        background = background_level(image)
-        interior = interior_level(image, mask, self.min_depth)
+        background, interior = self._levels(image, label)
         if not np.isfinite(interior):
             return label.with_data(mask.astype("uint8"))
         span = interior - background

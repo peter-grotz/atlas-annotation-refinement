@@ -59,11 +59,17 @@ class BoundaryProfile:
 
     #: Normalised intensity interpolated at the boundary itself.
     intensity_at_boundary: float
-    #: Rate of change of normalised intensity per voxel at the boundary. Always
-    #: positive: normalisation maps the inside to 0 and the outside to 1
-    #: whichever is brighter, so this is a sharpness magnitude. Larger means a
-    #: sharper edge and a boundary that can be placed more precisely. The
-    #: direction of the step is carried by ``contrast_across_boundary``.
+    #: Rate of change of normalised intensity per voxel at the boundary.
+    #: Normalisation maps the inside plateau to 0 and the outside plateau to 1,
+    #: so for a boundary lying on a monotonic ramp between them this is a
+    #: positive sharpness magnitude, and larger means an edge that can be placed
+    #: more precisely. It is negative when the profile is not monotonic between
+    #: the plateaus - a label extending past the structure into darker material,
+    #: with brighter tissue beyond, puts the surface in a trough and the local
+    #: gradient runs opposite to the plateau-to-plateau trend. A negative value
+    #: is therefore a positive finding: the surface does not lie on the ramp at
+    #: all, and the label is misplaced rather than merely imprecise. The
+    #: direction of the overall step is carried by ``contrast_across_boundary``.
     sharpness_at_boundary: float
     #: Distance over which the profile crosses from 0.2 to 0.8, in voxels.
     #: None when the two sides are too similar for the crossing to be defined.

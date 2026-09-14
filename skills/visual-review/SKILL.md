@@ -43,18 +43,28 @@ failures this catches, and guessing the axis would hide it.
 
 ## What the screen is telling you
 
-**Fragmentation** (`cohesion` below 0.90, or many `debris` pieces). A threshold
-admitted scattered noise. Usually the threshold is too permissive, or the label
-is being applied to a specimen whose background sits higher than the one it was
-fitted on.
+**Fragmentation** (`cohesion` below 0.90, or `components` above five). A
+threshold admitted scattered noise, or the structure has broken into pieces.
+Usually the threshold is too permissive, or the label is being applied to a
+specimen whose background sits higher than the one it was fitted on.
+
+Read `cohesion`, not `debris`. Every real label carries hundreds of
+single-voxel specks — measured on a ten-brain cohort, all ten had between 263
+and 696 of them while holding over 99.9% of their volume in one piece. The
+count is reported for information; the share of volume is what matters.
 
 **Lopsidedness** (`lateral_asymmetry` above 0.15). A one-sided failure: a
 registration that collapsed on one hemisphere, or a structure clipped by the
 field of view. Check the volume's extent before blaming the correction.
 
-**Cavities.** A threshold has punched holes through the structure's own
-interior. The threshold is too aggressive for this specimen, or the interior is
-genuinely dimmer here than where the parameter was fitted.
+**Punctures.** A threshold has punched holes through the structure's own
+interior — too aggressive for this specimen, or the interior is genuinely
+dimmer here than where the parameter was fitted.
+
+Read `punctures`, not `enclosed`. A sheet-like structure surrounds whatever it
+wraps, so a cortical label legitimately encloses most of the brain: measured on
+a hollow shell, `enclosed` reaches 89% of the label while nothing is wrong with
+it. `punctures` counts only pockets too small to be wrapped anatomy.
 
 **Boundary sharpness at or below zero.** The intensity does not rise across the
 label surface at all, so the boundary is not on an edge. This is the strongest

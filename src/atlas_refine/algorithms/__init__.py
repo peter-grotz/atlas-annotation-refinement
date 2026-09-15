@@ -19,6 +19,7 @@ from .contribute import (
     validate,
 )
 from . import intensity  # noqa: F401  registers the built-in families
+from . import regional  # noqa: F401  registers the region-wise families
 from . import contributed  # noqa: F401  discovers authored families
 
 __all__ = [

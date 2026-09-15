@@ -1,6 +1,6 @@
 ---
 name: visual-review
-description: Review produced labels on specimens that carry no manual annotation - rendering them over the image, reading the plausibility screen, and deciding which need a human. Use after applying a correction across a cohort, when iterating over candidate algorithms, or when a numeric result looks fine but the output has never been seen.
+description: Review produced labels by screening every specimen and rendering every new one - reading the plausibility measurements, looking at the label over the image, and deciding which need a human. Use whenever a correction is applied to a specimen, especially a new cohort where no manual annotation exists and this is the only verification available.
 ---
 
 # Reviewing labels nobody has looked at
@@ -10,21 +10,45 @@ to the rest. That remainder is the majority of the output and nothing checks it.
 This is the gap to close, and closing it does not require more annotation - only
 looking, and knowing what to look for.
 
-## Where this applies, and where it does not
+## Two parallel obligations, not a hierarchy
 
-Use agreement with a manual annotation wherever one exists. It is exact, cheap,
-and cannot be argued with; no visual judgement improves on it, and substituting
-one is a downgrade.
+Agreement with a manual annotation and visual review answer different questions,
+and neither substitutes for the other.
 
-Everything here is for specimens where no such annotation exists. The tools
-report that a label is **implausible**, never that it is correct. A specimen
-that raises no concern has not been verified — only found unremarkable.
+**Dice asks how accurate a correction is**, on the specimens that can be scored.
+Where an annotation exists it is exact and cannot be argued with, so no visual
+judgement improves on it *for that specimen*.
 
-## The two-step pass
+**Screening and rendering ask whether a label is plausible at all**, on every
+specimen — including the ones nothing else can check. On a typical cohort that
+is most of them: two of ten brains carried an independent cortex annotation, so
+Dice covered two while the screen covered ten and was the only check on eight.
 
-Screen first, then render what the screen questions. Screening is cheap and runs
-over a whole cohort; rendering and looking is the expensive part, so spend it
-where the numbers already point.
+On a new cohort the asymmetry is total. Applying a fitted correction to ten
+fresh brains yields no Dice anywhere, because re-annotating is the cost the
+method exists to avoid. Visual review is then the entire verification story.
+
+So: **screen every specimen, render every new one, and compute Dice wherever an
+annotation happens to exist.** Do not treat rendering as a fallback for when
+Dice is unavailable and something already looks wrong — rendering a new sample
+once is cheap, and it is the only look anyone will get.
+
+The tools report that a label is **implausible**, never that it is correct. A
+specimen that raises no concern has not been verified — only found
+unremarkable. That limitation applies equally whether or not Dice is available.
+
+This is not hypothetical. A 24% hemispheric asymmetry, against a cohort range of
+0.009 to 0.121, was found on a brain with no annotation; follow-up measurement
+showed the correction had inherited it from registration rather than caused it.
+No amount of Dice on the two annotated brains would have surfaced it, because
+the failure lived entirely in the unscoreable majority.
+
+## The pass
+
+Screen every specimen; the measurements are cheap and run over a whole cohort.
+Then render: every specimen on a cohort seen for the first time, and thereafter
+whatever the screen questions. Rendering and looking is the expensive part, so
+on a cohort already reviewed once, spend it where the numbers point.
 
 ```
 screens = [screen_label(label, image, specimen=sid, lateral_axis=1) for sid ...]

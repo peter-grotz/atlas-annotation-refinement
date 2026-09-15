@@ -72,6 +72,11 @@ class Provenance:
     #: record so the constraint travels with the data rather than living in
     #: documentation.
     note: str = ""
+    #: Coordinate frame, when the annotation is not in a specimen's own frame.
+    #: An atlas-space parent annotation is the case this exists for: it must
+    #: never be scored against a specimen image, and recording the frame on the
+    #: record is what makes that checkable rather than remembered.
+    frame: str = ""
 
     @classmethod
     def from_record(cls, record: dict) -> "Provenance":

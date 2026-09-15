@@ -250,3 +250,19 @@ class TestRegistry:
             defaults = algorithm.defaults()
             for parameter in algorithm.parameters:
                 assert min(parameter.values) <= defaults[parameter.name] <= max(parameter.values)
+
+
+def test_a_record_in_another_coordinate_frame_is_readable():
+    """An atlas-space parent annotation carries a frame; refusing to read it
+    locks the store out of its own records."""
+    from atlas_refine.io.store import Provenance
+
+    record = {
+        "specimen": "atlas", "structure": "ventricles", "basis": "pushed",
+        "kind": "independent", "annotator": "XX", "annotated": "2026-01-01",
+        "ingested_utc": "2026-01-01T00:00:00Z", "original_filename": "a.seg.nrrd",
+        "sha256": "0" * 64, "shape": [4, 4, 4], "voxels": 8,
+        "usable_for_fitting": True, "note": "parent",
+        "frame": "reference atlas, 461x323x621 @ 20um",
+    }
+    assert Provenance.from_record(record).frame.startswith("reference atlas")

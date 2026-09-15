@@ -164,3 +164,42 @@ class TestBudget:
         from atlas_refine.evaluate import check_admissible
 
         check_admissible(algorithm(), ["a", "b"])
+
+
+class TestCaliberPartition:
+    def test_a_structure_of_varying_width_splits_by_caliber(self):
+        from atlas_refine.algorithms.regional import caliber_partition
+
+        mask = np.zeros(SHAPE, dtype="uint8")
+        mask[10:30, 10:30, 10:30] = 1          # thick block
+        mask[10:30, 19:21, 32:38] = 1          # thin limb
+        image = vol(np.full(SHAPE, BACKGROUND))
+        regions, names = caliber_partition(image, vol(mask), STRUCTURE, BACKGROUND)
+        assert names == ["thin", "thick"]
+        assert (regions == 1).sum() > 0
+        assert (regions == 2).sum() > 0
+        assert (regions > 0).sum() == int(mask.sum())
+
+    def test_the_thin_limb_is_entirely_thin(self):
+        from atlas_refine.algorithms.regional import caliber_partition
+
+        mask = np.zeros(SHAPE, dtype="uint8")
+        mask[18:22, 18:22, 5:35] = 1           # a 4-voxel-wide tube
+        image = vol(np.full(SHAPE, BACKGROUND))
+        regions, _ = caliber_partition(image, vol(mask), STRUCTURE, BACKGROUND)
+        assert (regions == 2).sum() == 0       # nothing reaches a real core
+
+    def test_the_two_families_partition_differently(self):
+        image, label = sandwich()
+        shell = REGISTRY.create("regional_threshold")
+        caliber = REGISTRY.create("caliber_threshold")
+        with shell.specimen_context(image, label):
+            a = shell.region_sizes(image, label)
+        with caliber.specimen_context(image, label):
+            b = caliber.region_sizes(image, label)
+        assert set(a) == {"shell", "interior"}
+        assert set(b) == {"thin", "thick"}
+
+    def test_caliber_declares_its_own_parameter_names(self):
+        names = [p.name for p in REGISTRY.create("caliber_threshold").parameters]
+        assert names == ["fraction_thin", "fraction_thick"]

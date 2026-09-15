@@ -24,18 +24,23 @@ force: a two-region family needs two independent annotations, a four-region
 family needs four. This is a real constraint on how fine a partition can be
 justified, and it is enforced rather than advised.
 
-A measured caution, recorded because it cost an experiment to establish. On a
-cortical cohort this family tied exactly with the single global threshold, and
-the fit chose the same value for both regions when free to choose differently;
-the gain from regional freedom was zero to five decimal places, and the second
-parameter spanned its whole range for a 0.0005 change in agreement. The reason
-is instructive rather than discouraging: the shell/interior split is an
-excellent *localiser* of error - most of the residual disagreement does sit on
-the side facing brighter tissue - but error concentrating somewhere does not
-mean a different threshold helps there. Where the neighbour is brighter than the
-structure, no threshold separates them at any value, so a per-region parameter
-has nothing to find. Partition by where the correction should *differ*, which is
-not necessarily where it is *largest*.
+Choosing the partition is the whole design decision, and it is per structure.
+Measured on a cortical cohort, the shell/interior split gained exactly nothing:
+the fit chose the same value for both regions when free to differ, and the
+second parameter spanned its entire range for a 0.0005 change in agreement.
+That is a result about cortex and that partition, not about region-wise fitting.
+Cortex is in fact the worst case for it, because one of its two boundaries faces
+brighter tissue that no threshold separates at any value, so the parameter
+covering that side has nothing to find.
+
+The lesson generalises even though the result does not. The shell/interior split
+is an excellent *localiser* of error - most of the residual disagreement sits on
+the side facing brighter tissue - yet error concentrating somewhere does not
+mean a different threshold helps there. Partition by where the correction should
+*differ*, not by where it is *largest*, and expect a partition that suits one
+structure to be degenerate on another: measured on a ventricular system, where
+every neighbour is brighter, shell/interior put 97-100% of the label in a single
+region while a caliber split divided it roughly in half.
 """
 
 from __future__ import annotations
@@ -110,6 +115,48 @@ def shell_interior_partition(
     return regions, names
 
 
+#: Half-width, in voxels, below which a part of a structure is treated as thin.
+#: Fixed rather than fitted, for the same reason as PARTITION_REFERENCE: it
+#: defines where the regions are. Two voxels of half-width is where partial
+#: volume starts to dominate a lumen at typical working resolutions.
+THIN_HALF_WIDTH = 2.0
+
+
+def caliber_partition(
+    image: Volume,
+    label: Volume,
+    interior: float,
+    background: float,
+) -> tuple[np.ndarray, list[str]]:
+    """Split a label by local caliber: how thick the structure is at each voxel.
+
+    Intended for structures that vary in width along their length - a
+    ventricular system runs from wide lateral chambers to a narrow aqueduct.
+    A wide part has a clean core whose intensity reaches the structure's true
+    level; a narrow part is partial-volume mixed with its surroundings
+    throughout, so its intensity never gets there and a threshold fitted on the
+    wide part removes it entirely.
+
+    Caliber is taken as distance to the label surface, which is half-width
+    rather than width. The ``image`` and level arguments are unused here and
+    accepted so that partitions are interchangeable.
+
+    Returns:
+        An integer array - 0 outside the label, 1 thin, 2 thick - and the region
+        names in index order.
+    """
+    del image, interior, background      # signature kept uniform across partitions
+    mask = label.data > 0
+    names = ["thin", "thick"]
+    regions = np.zeros(mask.shape, dtype="uint8")
+    if not mask.any():
+        return regions, names
+    depth = ndi.distance_transform_edt(mask)
+    regions[mask & (depth <= THIN_HALF_WIDTH)] = 1
+    regions[mask & (depth > THIN_HALF_WIDTH)] = 2
+    return regions, names
+
+
 @REGISTRY.register
 class RegionalThreshold(_SpanNormalised):
     """Threshold each part of a structure at its own fraction of the span.
@@ -130,6 +177,11 @@ class RegionalThreshold(_SpanNormalised):
         "brighter tissue."
     )
 
+    #: Partition used to define the regions. Subclasses override it to split a
+    #: structure a different way; the fitting machinery is unchanged.
+    partition = staticmethod(shell_interior_partition)
+    region_names: tuple[str, str] = ("shell", "interior")
+
     @property
     def parameters(self) -> Sequence[Parameter]:
         return (
@@ -149,7 +201,7 @@ class RegionalThreshold(_SpanNormalised):
 
     def prepare(self, image: Volume, label: Volume) -> dict:
         context = super().prepare(image, label)
-        regions, names = shell_interior_partition(
+        regions, names = self.partition(
             image, label, context["interior"], context["background"]
         )
         context["regions"] = regions
@@ -161,7 +213,7 @@ class RegionalThreshold(_SpanNormalised):
         if cached and "regions" in cached:
             return cached["regions"], cached["region_names"]
         background, interior = self._levels(image, label)
-        return shell_interior_partition(image, label, interior, background)
+        return self.partition(image, label, interior, background)
 
     def apply(self, image: Volume, label: Volume, **params: float) -> Volume:
         image.assert_compatible(label)
@@ -191,3 +243,40 @@ class RegionalThreshold(_SpanNormalised):
             name: int((regions == index).sum())
             for index, name in enumerate(names, start=1)
         }
+
+
+@REGISTRY.register
+class CaliberThreshold(RegionalThreshold):
+    """Threshold the thin and thick parts of a structure separately.
+
+    For a structure whose width varies along its length, one threshold is a
+    compromise between parts with different intensity statistics. A wide part
+    reaches the structure's true level in its core; a narrow part is
+    partial-volume mixed throughout and never does, so a threshold fitted on the
+    wide part deletes the narrow one.
+
+    Two free parameters, so two independent annotations are required.
+    """
+
+    name = "caliber_threshold"
+    description = "Separate thresholds for the thin and thick parts of a label."
+
+    partition = staticmethod(caliber_partition)
+    region_names = ("thin", "thick")
+
+    @property
+    def parameters(self) -> Sequence[Parameter]:
+        return (
+            Parameter(
+                "fraction_thin",
+                FRACTIONS,
+                "Threshold for parts within THIN_HALF_WIDTH of the surface, "
+                "where partial volume keeps intensity away from the "
+                "structure's true level.",
+            ),
+            Parameter(
+                "fraction_thick",
+                FRACTIONS,
+                "Threshold for parts with a genuine core.",
+            ),
+        )

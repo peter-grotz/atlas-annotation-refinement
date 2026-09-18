@@ -1,134 +1,89 @@
 # atlas-refine
 
 Tools for correcting atlas-propagated brain annotations against a small
-number of manual ones, and for knowing when the correction can be trusted.
-Built to be operated by a human and an agent working together — neither
-alone is enough, for reasons this document tries to make concrete rather
-than assert.
+number of manual ones, and for determining when a correction is valid.
+Operated jointly by a human and an agent; neither role is sufficient alone.
 
-## The problem
+## Purpose
 
-Registering a specimen to a reference atlas and reverse-transforming the
-atlas parcellation gives a complete annotation of every specimen in a
-cohort, at no manual cost. The boundaries it produces follow atlas anatomy,
-not the anatomy actually visible in each acquisition, so they are wrong —
-but *systematically* wrong: the same deformation resolves the same
-structure the same way across specimens, which is what makes the error
-correctable from a small amount of evidence rather than needing to be
-re-annotated from scratch every time.
+The objective is to accelerate generation of ground-truth neuroanatomic
+annotations, which serve as reference regions for evaluating and improving
+registration to a chosen template.
 
-The correction that fixes one structure's error is often the wrong
-correction for another, and not by a small margin — the two commonest
-failure modes call for operations that are close to opposite. A label that
-over-covers a lower-intensity margin (cortex spilling into background) is
-fixed by an intensity threshold: keep what's brighter than the margin,
-discard the rest. A label that under-covers an interior with real contrast
-on both sides (a structure the deformation shrank away from) needs the
-opposite move — expansion, then a contour or deformable method to stop the
-expansion at the right edge. Applying either operation to the other failure
-mode doesn't just underperform, it actively damages the label: expanding a
-label that already over-covers makes the over-coverage worse. Whether a
-given structure is failing the first way or the second is not knowable from
-its name or from what it typically looks like — it's a property of how the
-registration resolved *that* structure in *that* cohort, visible only after
-propagation, and it can flip between two structures in the same cohort or
-even between two neighbours of the same structure. That's the shell/interior
-finding this repo produced directly: cortex's outer boundary and inner
-boundary needed opposite treatment, in the same specimens, on the same run.
+Reverse registration — warping a template's parcellation onto each specimen
+via the inverse of the specimen-to-template transform — produces a complete
+annotation for every specimen at no per-specimen annotation cost. Its
+boundaries follow template anatomy rather than the anatomy present in each
+acquisition, so they carry systematic, structure-specific error: the same
+deformation resolves the same structure the same way across specimens.
 
-This also isn't a regime where you can learn your way out of the
-problem. The number of hand-corrected examples per structure is one to
-five, because each one costs an expert hours. Supervised segmentation
-models need orders of magnitude more than that, so the method has to work
-well below the sample size where learning becomes reliable, or it isn't
-usable at all here. What's left is closer to program synthesis from a
-handful of examples than to fitting a model: a compositional space of
-thresholds, morphological operations, connectivity constraints, and
-deformable methods, searched using a measured description of *how* the
-current label is wrong to propose only the operations that could plausibly
-fix that specific failure, then kept only if they hold up on annotations
-excluded from the search.
+This is a two-stage, iterative process:
 
-Two things make that search viable instead of a way to fool yourself with
-enough attempts. First, the reasoning about which operation suits which
-failure — what a structure borders, whether that neighbour is brighter or
-darker, whether an interior has any contrast to work with — is exactly the
-kind of judgment call that doesn't reduce to a formula, but does reduce to
-evidence a reader (human or agent) can weigh directly. Second, the check on
-any proposal is exact: agreement with a manual annotation on data the
-proposal never saw. That combination — reasoning that has to stay open-
-ended, checked against a criterion that can't be argued with — is what this
-repository is built around, and it's why the tool is a set of measurements
-and gates for something that reasons, not a fixed pipeline and not a model
-you train once.
+1. **Propagate.** Reverse-register the template parcellation onto a specimen
+   through the existing registration pipeline. This is the zero-cost
+   baseline annotation.
+2. **Correct and reintroduce.** A small number of specimens are manually
+   corrected against the propagated label. The disagreement is measured, a
+   correction is fitted, and it is validated against annotations excluded
+   from the fit. Once ground truth exists for a structure, it can be
+   supplied to the registration stage itself as an additional similarity
+   term (`registration.MetricTerm`), constraining the deformation with
+   anatomy that image intensity alone does not localize. Re-running
+   propagation with the constrained registration improves label placement
+   at the source, for that structure, across the whole cohort — not only for
+   the specimens that were corrected.
 
-## What this is, and how it's meant to run
+Round *n*'s corrected annotations improve round *n*+1's registration. The
+package provides the propagation, correction, and validation stages, and
+the mechanism (`MetricTerm`) for feeding annotations back into registration;
+it does not run this loop automatically — each round is scoped by an
+operator (see *Operating model*).
 
-A library and a small set of gates, not a pipeline. It does not decide
-which correction to try, whether a structure needs a new algorithm, or when
-a result is good enough to apply to the cohort — none of that is
-encodable in advance, for the reasons above. What the code guarantees
-instead is that whoever *is* making those calls can't be fooled by the
-common ways this kind of fitting produces a plausible wrong answer: too few
-annotations for the parameters being fit, an annotation that was edited
-from an algorithm's own output being used to score that same algorithm,
-mismatched units or coordinate frames, a contributed algorithm whose
-justification is the placeholder text it was scaffolded with.
+The correction method itself cannot be fixed in advance. The two dominant
+failure modes require near-opposite operations: over-coverage of a
+lower-intensity margin is removed by an intensity threshold; under-coverage
+of an interior with contrast on both boundaries requires expansion followed
+by a contour or deformable method. Which mode applies to a given structure
+is not predictable from the structure's identity — it is a property of how
+that registration resolved that structure in that cohort, observable only
+after propagation, and it can differ between two boundaries of the same
+structure. (Measured directly in this repository: isocortex's
+background-facing and white-matter-facing boundaries required opposite
+treatments in the same specimens.) Sample size compounds this — one to five
+corrected specimens per structure, an order of magnitude below what
+supervised segmentation requires — so the problem is posed as constrained
+program synthesis over a small operator space (thresholds, morphological
+operations, deformable/contour methods), conditioned on a measured error
+signature, and checked against an exact, inexpensive criterion: agreement
+with held-out ground truth.
 
-That's a division of labor between two roles, and the tool needs both
-present — it's not built to be safely run by either alone.
+## Operating model
 
-**A human anchors it to ground truth and holds approval.** Only a person can
-produce the manual annotation the entire method is calibrated against, and
-only a person should decide what gets applied back to the cohort. Nothing
-here should be trusted to self-certify: the point of the exact-agreement
-check is that it's checked by someone who isn't the one who proposed the
-fix.
+The package supplies measurement and validation; it does not supply
+judgment. Two roles are required, and the tool is not intended to be run by
+either alone.
 
-**An agent does the per-structure reasoning that can't be pre-written.**
-Deciding whether a label's error is threshold-shaped or registration-shaped,
-which of six correction families the anatomy even permits before spending
-compute on the rest, whether a two-parameter fit that ties with the
-one-parameter version means the second parameter is real or inert, whether
-a rendered overlay shows leakage into a neighbour or an acceptable trim —
-these are judgments over evidence, made fresh each time, and hard-coding
-them is exactly what "different structures fail in opposite ways" rules
-out. A human doing this by hand, structure by structure, cohort by cohort,
-is the expert-time bottleneck the method exists to relieve; an agent reading
-the measurements this package produces is what makes revisiting that
-reasoning cheap enough to do for every structure rather than a few.
+| | provides | cannot be delegated because |
+|---|---|---|
+| **Human** | manual annotation; approval to apply a correction to the cohort or to reintroduce it into registration | ground truth requires expert judgment; approval requires accountability |
+| **Agent** | interpretation of measurements — which correction family the failure mode and anatomy support, whether a fit generalizes, whether a rendered label is plausible | the mapping from failure signature to correction is not enumerable in advance (see *Purpose*) |
 
-There is no command that runs this loop automatically — `atlas-refine`
-exposes three commands, listed below, and everything else is driven through
-the Python API in an interactive session where a human and an agent are
-both present. That's a deliberate absence, not a missing feature: the
-reasoning step is the part that has to stay under active judgment, and
-automating past it would be automating past the thing this whole design
-exists to get right.
+No command executes propagate → correct → validate → reintroduce end to
+end. `atlas-refine` exposes three commands (below); the remaining stages
+are driven through the Python API in a session where both roles are
+present.
 
-### What that looked like in practice
+### Result, one structure
 
-On isocortex, this took Dice from 0.905 to 0.976 using a single free
-parameter fitted on two independent annotations, and the fit transferred to
-a held-out specimen it never saw (0.968). The same pass also showed a
-two-parameter version of the same correction — one threshold for the part
-of the label facing background, another for the part facing white matter —
-tied with the one-parameter version exactly: the second parameter searched
-its entire range for a 0.0005 change in score. And screening every
-specimen a correction was applied to, including the eight with no manual
-annotation to score against, caught a registration failure (24%
-left-right volume asymmetry against a 0.01–0.12 range elsewhere in the
-cohort) that no threshold could have produced or fixed.
-
-None of those three findings came from a function call. They came from a
-person and an agent looking at what the functions returned and asking
-whether it meant what it appeared to mean — the tied two-parameter fit
-could have been reported as "confirms cortex needs two thresholds" instead
-of "the second parameter is dead weight," and the asymmetry could have
-gone unlooked-at entirely on a specimen with no ground truth to flag it.
-That's the gap this repository's design is aimed at: not the fitting, which
-is a few dozen lines per algorithm, but making sure the fitting is never
-the last word.
+Isocortex: Dice 0.905 (propagated) → 0.976, one free parameter fitted on
+two independent annotations, transferring to a held-out specimen at 0.968.
+A second parameter (region-wise thresholding, background-facing vs.
+white-matter-facing) changed the fitted score by 0.0005 against its full
+search range and was discarded. Screening applied to all ten specimens
+(two annotated, eight not) identified a 24% left–right volume asymmetry on
+an unannotated specimen, subsequently attributed to registration rather
+than to the correction — a failure mode no annotation-based metric could
+have surfaced, since none existed for that specimen.
 
 ## Install
 
@@ -136,43 +91,28 @@ the last word.
 pip install -e ".[dev]"
 ```
 
-Python 3.10+. Registration needs ANTsPy; characterisation, analysis, and
-review need only NumPy, SciPy, and Matplotlib.
+Python 3.10+. Registration requires ANTsPy. Characterization, analysis, and
+review require NumPy, SciPy, and Matplotlib only.
 
 ## Usage
 
-### What a human does
-
-Annotate a specimen, save it as `<specimen>__<structure>__<basis>__<annotator>__<YYYY-MM-DD>.seg.nrrd`
-in `inbox/`, and run:
+### Human: annotation and approval
 
 ```bash
 atlas-refine ingest --store ground_truth --inbox inbox \
     --reference "data/<sid>/image.nii.gz" --frame "spec-{sid}" \
     --spacing 80 80 80 --unit um
-```
-
-`basis` is the one field intake cannot check: it's whether you started from
-the raw propagated label (`pushed`), traced from nothing (`scratch`), or
-edited an algorithm's output (`refined`). The first two count as evidence for
-fitting; the third does not, because its optimum is pinned to whatever
-produced the starting file. Get this field right — it's the fact that
-decides what the annotation is allowed to prove.
-
-```bash
 atlas-refine status       # holdings by structure, split by admissibility
-atlas-refine algorithms   # registered correction families and their parameters
+atlas-refine algorithms   # registered correction families and parameters
 ```
 
-Then review what an agent proposes before it's applied to the cohort — see
-*Review* below. Approving that step is a human action; nothing in this
-package applies a correction to the store on its own.
+Filename: `<specimen>__<structure>__<basis>__<annotator>__<YYYY-MM-DD>.seg.nrrd`.
+`basis` — `pushed` (from the propagated label), `scratch`, or `refined` (from
+a correction's output) — is not verifiable at intake and determines
+admissibility: `pushed`/`scratch` are independent evidence; `refined` is not,
+since its optimum is pinned to the parameter that produced it.
 
-### What an agent does
-
-Everything between ingest and approval: propagate labels, characterise how
-each one fails, screen out corrections the anatomy rules out, fit and score
-what's left, and produce evidence for a human to review.
+### Agent: propagation, characterization, fitting, review
 
 ```python
 from atlas_refine.algorithms import REGISTRY
@@ -180,26 +120,28 @@ from atlas_refine.analysis import next_to_annotate, profile_image, screening_bri
 from atlas_refine.characterize import characterize
 from atlas_refine.evaluate import check_admissible, fit, measure_transfer
 from atlas_refine.io import GroundTruthStore
+from atlas_refine.registration import MetricTerm, propagate_labels, register
 from atlas_refine.review import rank_cohort, render_panel, screen_label
 
 store = GroundTruthStore("ground_truth")
 independent = store.fitting_set("isocortex")
 
-# what's known before any annotation exists
-print(screening_brief("isocortex"))
+print(screening_brief("isocortex"))                    # anatomically admissible families
 profiles = {sid: profile_image(image) for sid, image in cohort_images.items()}
 print(next_to_annotate(profiles, independent).describe())
 
-# how a propagated label is wrong, and what that supports fitting
-signature = characterize(image, propagated, reference)
-print(signature.summary())
-
+signature = characterize(image, propagated, reference)  # how the label disagrees
 algorithm = REGISTRY.create("contrast_threshold")
-check_admissible(algorithm, independent)              # raises if under-evidenced
+check_admissible(algorithm, independent)                 # parameter budget
 result = fit(algorithm, independent, loader)
 transfer = measure_transfer(algorithm, result.params, independent[:1], independent[1:], loader)
 
-# every specimen the fit above was never scored against
+# reintroduce ground truth as a registration constraint (round n+1)
+registration = register(moving=template, fixed=specimen_image,
+                        extra_metrics=[MetricTerm(fixed=specimen_gt, moving=template_gt)])
+propagated_next_round = propagate_labels(template_labels, specimen_image, registration)
+
+# screen every specimen the fit was applied to, scored or not
 screens = [screen_label(labels[sid], images[sid], specimen=sid) for sid in cohort]
 for review in rank_cohort(screens):
     print(review.describe())
@@ -207,102 +149,76 @@ render_panel(images[sid], {"propagated": pushed, "refined": corrected}, f"review
 ```
 
 `loader` maps a specimen id to `(image, propagated_label, reference)`. Full
-walkthrough in [docs/workflow.md](docs/workflow.md).
+walkthrough: [docs/workflow.md](docs/workflow.md).
 
 ## Review
 
-Agreement with a manual annotation is exact wherever one exists, but a
-correction fitted on a few specimens gets applied to the rest of the cohort,
-where nothing else checks it. `atlas_refine.review` covers that gap two
-ways, and both should run on every specimen a correction is applied to —
-not only the ones that look suspicious:
+Correction is validated by exact agreement wherever ground truth exists;
+`atlas_refine.review` covers the specimens where it does not — typically the
+majority, since a correction fitted on few specimens is applied to the full
+cohort.
 
-- `screen_label` measures whether a label is anatomically plausible with no
-  reference needed: fragmentation, hemispheric asymmetry, holes punched
-  through a structure's own interior versus anatomy it legitimately
-  encloses, and whether the label sits on a real intensity edge at all.
-  `rank_cohort` orders a whole cohort by what deserves a closer look.
-- `render_panel` draws label outlines over the specimen image, sliced
-  through the label's own extent, for whoever looks next — a person or a
-  vision-capable agent.
+- `screen_label` — reference-free plausibility: fragmentation, hemispheric
+  asymmetry, interior punctures vs. anatomy a structure legitimately
+  encloses, boundary sharpness. `rank_cohort` orders a cohort by priority
+  for review.
+- `render_panel` — label outlines over specimen intensity, sliced through
+  the label's extent, for a human or vision-capable agent.
 
-Neither establishes that a label is correct — only that it's implausible, or
-that nothing implausible was found. On a real cohort this caught the
-registration failure described above on a specimen with no manual
-annotation at all; Dice couldn't have found it because nothing was there to
-compute Dice against. See `skills/visual-review/SKILL.md`.
+Neither establishes correctness — only implausibility, or its absence. See
+`skills/visual-review/SKILL.md`.
 
-## What's in the package
+## Package contents
 
 ```
 src/atlas_refine/
-    io/              volume container with unit/frame checks; the annotation store
-    registration/    two-stage atlas-to-specimen registration and label propagation
-    characterize/    measures how a propagated label disagrees with a reference
-    algorithms/      correction families, their registry, and the framework
-                     for authoring and admitting new ones
-    analysis/        acquisition profiling, cohort comparison, boundary
-                     profiling, and anatomical context — all annotation-free
+    io/              volume container (explicit unit/frame); annotation store
+    registration/    two-stage registration; MetricTerm-constrained refinement;
+                     single-resampling label propagation
+    characterize/    quantifies propagated-vs-reference disagreement
+    algorithms/      correction families, registry, contribution gate
+    analysis/        annotation-free acquisition, cohort, boundary, and
+                     anatomical-context measures
     evaluate/        fitting, transfer scoring, admissibility, leave-one-out
-    experiments/     append-only log of every correction attempted
-    review/          plausibility screening and diagnostic rendering for
-                     specimens with no manual annotation
+    experiments/     append-only log of correction attempts
+    review/          plausibility screening and rendering, annotation-free
     cli.py           ingest / status / algorithms
 ```
 
-Six correction families ship built in — `contrast_threshold`,
-`band_threshold`, `hysteresis_threshold`, `morphological_cleanup`, and two
-that fit a different parameter per region of a structure,
-`regional_threshold` (shell vs. interior, by neighbour brightness) and
-`caliber_threshold` (thin vs. thick, by local width). A new family is added
-by subclassing `RefinementAlgorithm`, and `algorithms/contribute.py` gates
-admission on it behaving correctly and carrying a real justification, not on
-how well it scores — see [docs/authoring.md](docs/authoring.md). Authoring a
-new family is agent work in the same sense as choosing among existing ones:
-the package checks that it's correct and honestly justified, not that the
-idea behind it is good.
+Six correction families: `contrast_threshold`, `band_threshold`,
+`hysteresis_threshold`, `morphological_cleanup`,
+`regional_threshold` (shell vs. interior, by neighbor polarity), and
+`caliber_threshold` (thin vs. thick, by local width). New families
+subclass `RefinementAlgorithm`; `algorithms/contribute.py` gates admission
+on correctness and a substantive rationale, not on score. See
+[docs/authoring.md](docs/authoring.md).
 
 ## Skills
 
-Five `SKILL.md` packages under `skills/`, in the Agent Skills open standard,
-carry the judgment that turns these measurements into decisions. They are
-the concrete form the "agent" side of this design takes — written for
-whichever agent is doing the reasoning to read, not executed by the
-package itself:
+Five `SKILL.md` packages (Agent Skills open standard) encode the
+interpretation applied to these measurements:
 
-| skill | answers |
+| skill | scope |
 |---|---|
-| `image-analysis` | What does this acquisition look like, and which specimen is most worth annotating next? |
-| `neuroanatomy` | What does this structure border, and what does that rule out before fitting anything? |
-| `segmentation-correction` | Which family suits this error signature, and does the fit transfer to held-out specimens? |
-| `visual-review` | What does a rendered label show, and which unscored specimens need a look? |
-| `evidence-analysis` | What does this result actually support, at this sample size? |
-
-The modules supply numbers; the skills supply how to read them, because a
-number nobody knows how to interpret isn't a capability. Every failure in
-building this came from that gap: a proxy metric that pointed the wrong way,
-a correlation reported on three points, a family the anatomy had already
-ruled out but got fitted anyway.
+| `image-analysis` | Annotation-free acquisition profiling; next-specimen selection |
+| `neuroanatomy` | Structure adjacency and polarity; admissible-family screening |
+| `segmentation-correction` | Signature-to-family routing; fitting and transfer |
+| `visual-review` | Rendered-label interpretation; unscored-specimen triage |
+| `evidence-analysis` | Validity of a reported result at a given sample size |
 
 ## Guarantees enforced in code
 
-- **Provenance.** An annotation edited from an algorithm's output can't be
-  used to fit or validate that algorithm; `GroundTruthStore` tracks what
-  each annotation started from and excludes it automatically.
-- **Parameter budget.** Fitting is refused when a family has more free
-  parameters than there are independent annotations to constrain them.
-- **Geometry.** Volumes carry an explicit unit and coordinate frame;
-  operations between them assert compatibility rather than assume it.
-- **Contribution rationale.** A newly authored algorithm is rejected if its
-  justification is the scaffold's placeholder text, checked by content, not
-  just length.
+- **Provenance.** `GroundTruthStore` excludes `refined`-basis annotations
+  from fitting and validation automatically.
+- **Parameter budget.** Fitting is refused when free parameters exceed
+  independent annotations.
+- **Geometry.** Volumes carry explicit unit and coordinate frame; operations
+  between them assert compatibility.
+- **Contribution rationale.** A contributed algorithm is rejected if its
+  rationale matches the scaffold placeholder, by content comparison.
 
-None of this replaces the judgment of the human and agent operating the
-tool — it constrains what a wrong or lazy judgment from either of them is
-able to get away with. A human can still approve a bad correction and an
-agent can still propose one; the guarantees only rule out the specific
-failure modes that arise from evidence being misused, not from the wrong
-conclusion being drawn from evidence that was used correctly.
+These constrain what an incorrect judgment can produce; they do not
+substitute for the judgment of the human and agent operating the tool.
 
 ## Testing
 
@@ -310,10 +226,10 @@ conclusion being drawn from evidence that was used correctly.
 PYTHONPATH=src python3 -m pytest tests -q
 ```
 
-224 tests. Registration is checked against synthetic phantoms with a known
-displacement, including reproducibility across repeated runs — which
-requires a non-zero random seed and single-threaded execution; the seed and
-thread count ANTs treats as "use the clock" otherwise are rejected.
+224 tests. Registration is validated against synthetic phantoms with known
+displacement, including run-to-run reproducibility, which requires a
+non-zero random seed and single-threaded execution — ANTs treats a seed of
+zero as an instruction to seed from the system clock.
 
 ## License
 

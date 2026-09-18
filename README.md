@@ -85,6 +85,18 @@ an unannotated specimen, subsequently attributed to registration rather
 than to the correction — a failure mode no annotation-based metric could
 have surfaced, since none existed for that specimen.
 
+<p align="center">
+  <img src="docs/images/asymmetry_review.png" width="720"
+       alt="Propagated (cyan) and refined (magenta) isocortex outlines over specimen intensity, showing left-right volume asymmetry inherited from registration.">
+</p>
+
+<sub>`render_panel` output for the specimen above: propagated (cyan) and
+corrected (magenta) isocortex outlines over intensity, sliced through the
+label's extent. `axis 2 · 44` shows the asymmetry directly — a large
+labelled region on one side, a small fragment on the other. Specimen
+identity and array-axis-to-anatomy mapping are not established here; see
+`skills/visual-review/SKILL.md`.</sub>
+
 ## Install
 
 ```bash
@@ -167,6 +179,16 @@ cohort.
 
 Neither establishes correctness — only implausibility, or its absence. See
 `skills/visual-review/SKILL.md`.
+
+<p align="center">
+  <img src="docs/images/ventricle_review.png" width="720"
+       alt="Propagated (cyan) and manually corrected (magenta) ventricle outlines over specimen intensity, for a different structure than the asymmetry example above.">
+</p>
+
+<sub>The same rendering applied to ventricles: propagated (cyan) versus a
+manually corrected annotation (magenta). `axis 0 · 324` shows both lateral
+ventricles, where the correction moves the boundary onto the fluid-filled
+lumen the propagated label under- or over-reached.</sub>
 
 ## Package contents
 

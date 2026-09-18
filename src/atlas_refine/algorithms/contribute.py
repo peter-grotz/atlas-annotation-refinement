@@ -42,11 +42,13 @@ import shutil
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import TYPE_CHECKING, Mapping, Sequence
+
+if TYPE_CHECKING:
+    from ..evaluate.search import Loader
 
 import numpy as np
 
-from ..evaluate.search import Loader, check_admissible, fit, measure_transfer, scores
 from ..experiments.trials import TrialLog
 from ..io.volumes import Volume
 from .base import REGISTRY, RefinementAlgorithm
@@ -398,7 +400,7 @@ def validate(
 def benchmark(
     candidate: RefinementAlgorithm,
     specimens: Sequence[str],
-    loader: Loader,
+    loader: "Loader",
     *,
     incumbents: Sequence[str] | None = None,
 ) -> BenchmarkReport:
@@ -407,6 +409,11 @@ def benchmark(
     Both sides are fitted on the same annotations, so the comparison reflects
     the family rather than a difference in tuning effort.
     """
+    # Imported here, not at module level: this package and atlas_refine.evaluate
+    # import from one another, and importing at call time - by which point both
+    # modules have finished loading - is what breaks the cycle.
+    from ..evaluate.search import check_admissible, fit
+
     check_admissible(candidate, specimens)
     candidate_fit = fit(candidate, specimens, loader)
 
@@ -517,6 +524,8 @@ def contribute(
 
     track, evidence = "starting_point", "in-sample"
     if held_out:
+        from ..evaluate.search import measure_transfer
+
         transfer = measure_transfer(algorithm, marks.candidate_params, specimens, held_out, loader)
         evidence = "held-out"
         if transfer.generalises:

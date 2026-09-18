@@ -258,9 +258,9 @@ class TestRender:
     def test_the_caption_names_the_labels_and_slices(self, tmp_path):
         mask = ball()
         panel = render_panel(image_for(mask), {"refined": vol(mask)},
-                             tmp_path / "c.png", specimen="822175")
+                             tmp_path / "c.png", specimen="specimen-07")
         caption = panel.caption()
-        assert "822175" in caption and "refined" in caption
+        assert "specimen-07" in caption and "refined" in caption
         assert "no anatomical reorientation" in caption
 
     def test_mismatched_geometry_is_refused(self, tmp_path):

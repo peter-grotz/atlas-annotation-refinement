@@ -217,11 +217,12 @@ on correctness and a substantive rationale, not on score. See
 
 ## Skills
 
-Five `SKILL.md` packages (Agent Skills open standard) encode the
+Six `SKILL.md` packages (Agent Skills open standard) encode the
 interpretation applied to these measurements:
 
 | skill | scope |
 |---|---|
+| `registration` | Affine/deformable stage order; reproducibility; ground-truth reintroduction |
 | `image-analysis` | Annotation-free acquisition profiling; next-specimen selection |
 | `neuroanatomy` | Structure adjacency and polarity; admissible-family screening |
 | `segmentation-correction` | Signature-to-family routing; fitting and transfer |

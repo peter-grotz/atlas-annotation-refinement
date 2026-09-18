@@ -61,12 +61,28 @@ moving the label, which is a different family and often a different problem.
 | over-coverage, bounded by both brighter and dimmer neighbours | `band_threshold` |
 | under-coverage, structure partly below a single cut but contiguous | `hysteresis_threshold` |
 | over-coverage, shell of constant thickness, separation near zero | `morphological_cleanup` |
+| error concentrated on the side facing one kind of neighbour, opposite polarity on the other side | `regional_threshold` |
+| error concentrated where the structure is thin, contiguous through a wide part | `caliber_threshold` |
 | displacement, or separation negative at every boundary | none — return to registration |
+
+`regional_threshold` and `caliber_threshold` fit a separate parameter for each
+half of a structure — shell versus interior, or thin versus thick — rather than
+one for the whole label. Error concentrating in one region is not by itself a
+reason to reach for these: on isocortex most of the residual error sat on the
+white-matter-facing side, and a regional fit still gained nothing (0.0005
+against the whole search range), because that side's neighbour is brighter at
+every threshold and no parameter there had anything to find. These families
+earn their extra parameter only when the two regions face genuinely different
+intensity relationships — one thresholdable, one not, or a genuine core versus
+a partial-volume-dominated sliver — not merely different amounts of error.
+Check with `neuroanatomy`'s boundary relations before fitting either.
 
 Prefer the fewest parameters that fits. A family with more free parameters than
 there are independent annotations cannot be validated, and fitting is refused.
 A second parameter that improves the fit by less than the spread across the grid
-is not buying anything.
+is not buying anything — this is what happened to `regional_threshold` on
+cortex above, and it is checkable the same way on any family: sweep the extra
+parameter alone and see whether the score moves.
 
 ## Fitting and validating
 

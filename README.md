@@ -60,7 +60,7 @@ The package supplies measurement and validation, not judgment.
 | | provides | cannot be delegated because |
 |---|---|---|
 | **Human** | manual annotation; approval to apply a correction to the cohort or reintroduce it into registration | ground truth requires expert judgment; approval requires accountability |
-| **Agent** | interpretation of measurements — which correction family the failure mode and anatomy support, whether a fit generalizes, whether a rendered label is plausible | the mapping from failure signature to correction is not enumerable in advance |
+| **Agent** | interpretation of measurements — which correction family the failure mode and anatomy support, whether a fit generalizes, whether a rendered label is plausible; authoring a new correction family when none of the six registered ones fit a measured error signature | the mapping from failure signature to correction is not enumerable in advance |
 
 No command executes propagate → correct → validate → reintroduce
 end to end. `atlas-refine` exposes three commands (below); remaining
@@ -200,13 +200,21 @@ src/atlas_refine/
     cli.py           ingest / status / algorithms
 ```
 
-Six correction families: `contrast_threshold`, `band_threshold`,
-`hysteresis_threshold`, `morphological_cleanup`,
+Six correction families ship built in: `contrast_threshold`,
+`band_threshold`, `hysteresis_threshold`, `morphological_cleanup`,
 `regional_threshold` (shell vs. interior, by neighbor polarity), and
-`caliber_threshold` (thin vs. thick, by local width). New families
-subclass `RefinementAlgorithm`; `algorithms/contribute.py` gates
-admission on correctness and a substantive rationale, not on score. See
-[docs/authoring.md](docs/authoring.md).
+`caliber_threshold` (thin vs. thick, by local width). The registry is not
+closed — an agent authors a new family when the trial log
+(`experiments/`) shows the existing six were tried against a comparable
+error signature and fell short, or the signature is unlike anything
+recorded. A new family subclasses `RefinementAlgorithm`; `contribute.py`
+enforces correctness (binary output, deterministic, handles an empty or
+too-thin label) and rejects a rationale that matches the scaffold
+placeholder, by content comparison, not length. It does not reject on
+score — authoring one for a small margin over an incumbent is discouraged
+in [docs/authoring.md](docs/authoring.md) as bad practice, not blocked in
+code, since the gain or lack of one is exactly what the benchmark against
+incumbents is for deciding.
 
 ## Skills
 

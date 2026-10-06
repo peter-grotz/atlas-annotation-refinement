@@ -80,6 +80,30 @@ not representative, in which case subtracting it can remove signal instead
 of removing noise. Check with `image-analysis`'s `background_spread` field
 first.
 
+**Mask or subtract, never both.** A volume already masked to the brain has no
+background plateau, so its modal non-zero value is *tissue* and subtracting it
+erases most of the structure. Measured on a masked specimen: 67% of brain
+voxels clipped, and template-to-sample Dice fell from 0.97 to 0.71 — while
+direct registration of the same masked images, unsubtracted, reached 0.97.
+Pre-subtracting before masking is not a fix either: it pushes dim tissue
+toward zero and dissolves the brain outline that mutual information aligns
+(0.81). Masking matters when one volume has structure the other lacks — an
+averaged template's rectangular field-of-view border, a strip of mounting
+material — and the right call then is to mask both and pass
+`subtract_background=False`.
+
+`register()` refuses the combination: a volume with more than 20% exact zeros
+inside its data bounding box is treated as masked (`masked_fraction`). Raw
+acquisitions measure 0–6%; masked volumes 55–63%. Atlas templates are often
+**natively masked** — the Perens LSFM template is 55% interior zeros as
+distributed — so the default fails on them even when you have masked nothing.
+
+A brain mask threshold that is too loose is the other half of this failure.
+A mask that admits mounting material puts a large false bright region into
+the masked image; measured, a mask spanning 36.8 mm left-right against a
+29.2 mm template dropped Dice from 0.96 to 0.74 on its own. Check the mask's
+extent against the template's before registering.
+
 ## Propagating labels
 
 ```python

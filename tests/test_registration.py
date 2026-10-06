@@ -251,3 +251,43 @@ class TestSave:
                 f"{len(saved[label])} were reported as saved"
             )
             assert all(Path(p).exists() for p in saved[label])
+
+
+class TestMaskedInput:
+    """Background subtraction assumes a background plateau. A volume already
+    masked to the brain has none: its modal non-zero value is tissue, and
+    subtracting it silently erases most of the structure."""
+
+    def masked(self, data: np.ndarray, offset: int = 0) -> np.ndarray:
+        return np.where(_ellipsoid(offset), data, 0.0).astype("float32")
+
+    def test_masked_input_is_refused_when_subtracting(self, pair):
+        source, target = pair
+        masked = volume(self.masked(target.data, SHIFT), "target")
+        with pytest.raises(ValueError, match="already masked"):
+            register(moving=source, fixed=masked, config=FAST)
+
+    def test_masked_input_registers_without_subtraction(self, pair):
+        source, target = pair
+        moving = volume(self.masked(source.data, 0), "source")
+        fixed = volume(self.masked(target.data, SHIFT), "target")
+        result = register(moving=moving, fixed=fixed, config=FAST, subtract_background=False)
+        assert result.forward
+
+    def test_raw_acquisitions_pass_the_check(self, pair):
+        """The raw phantoms carry a background plateau and no interior zeros."""
+        from atlas_refine.registration.register import MASKED_ZERO_FRACTION, masked_fraction
+
+        source, target = pair
+        assert masked_fraction(source.data) <= MASKED_ZERO_FRACTION
+        assert masked_fraction(target.data) <= MASKED_ZERO_FRACTION
+
+    def test_zeros_outside_the_acquisition_box_do_not_count(self):
+        """True zeros beyond the field of view are expected; only zeros inside
+        the data's bounding box indicate masking."""
+        from atlas_refine.registration.register import masked_fraction
+
+        data = np.zeros(SHAPE, dtype="float32")
+        data[4:28, 4:28, 4:28] = BACKGROUND
+        data[_ellipsoid(0)] = SIGNAL
+        assert masked_fraction(data) == 0.0

@@ -247,7 +247,7 @@ interpretation applied to these measurements:
 PYTHONPATH=src python3 -m pytest tests -q
 ```
 
-224 tests. Registration is validated against synthetic phantoms with
+228 tests. Registration is validated against synthetic phantoms with
 known displacement, including run-to-run reproducibility, which requires
 a non-zero random seed and single-threaded execution — ANTs treats a seed
 of zero as an instruction to seed from the system clock.

@@ -26,6 +26,23 @@ import numpy as np
 from ..io.volumes import Volume, background_level
 
 
+#: Share of exact zeros inside the bounding box of a volume's data above which
+#: it is treated as already masked. background_level assumes true zeros occur
+#: only outside the acquisition box, so a masked volume violates it. Measured:
+#: raw acquisitions 0-6%, masked volumes and natively masked atlas templates
+#: 55-63%.
+MASKED_ZERO_FRACTION = 0.20
+
+
+def masked_fraction(data: np.ndarray) -> float:
+    """Share of exact zeros inside the bounding box of the non-zero data."""
+    nonzero = np.nonzero(data)
+    if not nonzero[0].size:
+        return 1.0
+    box = tuple(slice(int(i.min()), int(i.max()) + 1) for i in nonzero)
+    return float((data[box] == 0).mean())
+
+
 @dataclass(frozen=True)
 class MetricTerm:
     """An additional similarity term evaluated during the deformable stage.
@@ -171,6 +188,18 @@ def register(
     def prepare(volume: Volume) -> ants.ANTsImage:
         data = volume.data
         if subtract_background:
+            # A volume already masked to the brain has no background plateau: its
+            # modal non-zero value is tissue, and subtracting it erases most of the
+            # structure. Measured on a masked specimen, 67% of brain voxels were
+            # clipped and template-to-sample Dice fell from 0.97 to 0.71.
+            zeros = masked_fraction(data)
+            if zeros > MASKED_ZERO_FRACTION:
+                raise ValueError(
+                    f"frame '{volume.frame}' is {zeros:.0%} exact zeros inside its "
+                    f"data bounding box, so it is already masked and has no "
+                    f"background plateau to subtract; its modal value is tissue. "
+                    f"Pass subtract_background=False."
+                )
             data = np.clip(data - background_level(volume), 0, None)
         return _to_ants(volume.with_data(data))
 
